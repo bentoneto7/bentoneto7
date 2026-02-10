@@ -1,0 +1,104 @@
+import streamlit as st
+import plotly.express as px
+
+from core import database, analyzer
+
+# Initialize database
+database.init_db()
+
+st.set_page_config(
+    page_title="Content Radar",
+    page_icon="📡",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+st.title("📡 Content Radar")
+st.caption("Sistema de radar de conteúdo para Instagram — análise de tendências e geração de ideias")
+
+st.divider()
+
+# Metrics row
+accounts = database.get_accounts()
+post_count = database.get_post_count()
+avg_engagement = analyzer.get_avg_engagement_rate(days=30)
+
+last_scraped = "Nunca"
+for acc in accounts:
+    if acc.get("last_scraped_at"):
+        last_scraped = acc["last_scraped_at"][:16].replace("T", " ")
+        break
+
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("Contas Monitoradas", len(accounts))
+col2.metric("Posts Coletados", post_count)
+col3.metric("Engajamento Médio", f"{avg_engagement:.2%}")
+col4.metric("Último Scrape", last_scraped)
+
+st.divider()
+
+# Main content
+if post_count == 0:
+    st.info(
+        "👋 **Bem-vindo ao Content Radar!** Comece adicionando contas na página "
+        "**Contas** no menu lateral e execute o primeiro scrape."
+    )
+else:
+    left_col, right_col = st.columns([3, 2])
+
+    with left_col:
+        st.subheader("Engajamento ao Longo do Tempo")
+        df = analyzer.get_posts_dataframe(days=30)
+        if not df.empty and "posted_at" in df.columns:
+            df = df.dropna(subset=["posted_at"])
+            if not df.empty:
+                df_daily = df.set_index("posted_at").resample("D").agg(
+                    avg_engagement=("engagement_rate", "mean"),
+                    post_count=("id", "count"),
+                ).reset_index()
+
+                fig = px.line(
+                    df_daily, x="posted_at", y="avg_engagement",
+                    labels={"posted_at": "Data", "avg_engagement": "Engajamento Médio"},
+                )
+                fig.update_layout(height=350, margin=dict(l=0, r=0, t=10, b=0))
+                st.plotly_chart(fig, use_container_width=True)
+
+    with right_col:
+        st.subheader("Top 5 Posts")
+        top_posts = analyzer.get_top_posts(days=30, limit=5)
+        if not top_posts.empty:
+            for _, post in top_posts.iterrows():
+                caption_preview = (post["caption"][:80] + "...") if len(str(post["caption"])) > 80 else post["caption"]
+                st.markdown(
+                    f"**@{post['account_username']}** — "
+                    f"❤️ {post['likes']:,} 💬 {post['comments']:,} "
+                    f"({post['engagement_rate']:.2%})"
+                )
+                st.caption(caption_preview)
+                st.divider()
+
+    # Hashtags and post types side by side
+    h_col, t_col = st.columns(2)
+
+    with h_col:
+        st.subheader("Top Hashtags")
+        hashtags_df = analyzer.get_top_hashtags(days=30, limit=10)
+        if not hashtags_df.empty:
+            fig = px.bar(
+                hashtags_df, x="count", y="hashtag", orientation="h",
+                labels={"count": "Frequência", "hashtag": ""},
+            )
+            fig.update_layout(height=300, margin=dict(l=0, r=0, t=10, b=0), yaxis=dict(autorange="reversed"))
+            st.plotly_chart(fig, use_container_width=True)
+
+    with t_col:
+        st.subheader("Tipos de Post")
+        type_df = analyzer.get_post_type_distribution(days=30)
+        if not type_df.empty:
+            fig = px.pie(
+                type_df, values="count", names="post_type",
+                color_discrete_sequence=px.colors.qualitative.Set2,
+            )
+            fig.update_layout(height=300, margin=dict(l=0, r=0, t=10, b=0))
+            st.plotly_chart(fig, use_container_width=True)
