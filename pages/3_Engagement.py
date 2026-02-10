@@ -1,6 +1,10 @@
+import sys
+import os
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
 import streamlit as st
 import plotly.express as px
-import pandas as pd
 
 from core import database, analyzer
 
@@ -30,6 +34,11 @@ st.divider()
 
 if not accounts:
     st.info("Adicione perfis na página **Contas** e execute um scrape primeiro.")
+    st.stop()
+
+post_count = database.get_post_count()
+if post_count == 0:
+    st.info("Nenhum post coletado ainda. Vá para a página **Contas** e clique em **Coletar**.")
     st.stop()
 
 # Per-account comparison
@@ -79,6 +88,7 @@ if not df.empty:
 
     if not df.empty:
         type_labels = {"image": "Imagem", "video": "Vídeo", "carousel": "Carrossel"}
+        df = df.copy()
         df["tipo"] = df["post_type"].map(lambda x: type_labels.get(x, x))
 
         fig = px.box(
@@ -102,14 +112,21 @@ if not top_posts.empty:
         top_posts = top_posts[top_posts["account_username"].isin(selected_accounts)]
 
     for _, post in top_posts.iterrows():
+        likes = int(post["likes"])
+        comments = int(post["comments"])
         with st.expander(
-            f"@{post['account_username']} — ❤️ {post['likes']:,} 💬 {post['comments']:,} "
+            f"@{post['account_username']} — ❤️ {likes:,} 💬 {comments:,} "
             f"| Engajamento: {post['engagement_rate']:.2%}"
         ):
-            st.markdown(f"**Tipo:** {post['post_type']} | **Data:** {str(post['posted_at'])[:10]}")
-            st.markdown(f"**Caption:**\n{post['caption'][:500] if post['caption'] else 'Sem caption'}")
-            if post.get("url"):
-                st.markdown(f"[Ver no Instagram]({post['url']})")
+            post_type_label = {"image": "Imagem", "video": "Vídeo", "carousel": "Carrossel"}.get(
+                post["post_type"], post["post_type"]
+            )
+            st.markdown(f"**Tipo:** {post_type_label} | **Data:** {str(post['posted_at'])[:10]}")
+            caption_text = str(post["caption"] or "Sem caption")
+            st.markdown(f"**Caption:**\n{caption_text[:500]}")
+            url = post.get("url") or ""
+            if url:
+                st.markdown(f"[Ver no Instagram]({url})")
 
 st.divider()
 
@@ -122,20 +139,23 @@ if not all_df.empty:
     if post_types:
         all_df = all_df[all_df["post_type"].isin(post_types)]
 
-    display_df = all_df[["account_username", "post_type", "likes", "comments",
-                         "engagement_rate", "posted_at"]].copy()
-    display_df.columns = ["Perfil", "Tipo", "Likes", "Comentários", "Engajamento", "Data"]
-    display_df = display_df.sort_values("Engajamento", ascending=False)
+    if not all_df.empty:
+        display_df = all_df[["account_username", "post_type", "likes", "comments",
+                             "engagement_rate", "posted_at"]].copy()
+        display_df.columns = ["Perfil", "Tipo", "Likes", "Comentários", "Engajamento", "Data"]
+        display_df = display_df.sort_values("Engajamento", ascending=False)
 
-    st.dataframe(
-        display_df,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Engajamento": st.column_config.NumberColumn(format="%.4f"),
-            "Likes": st.column_config.NumberColumn(format="%d"),
-            "Comentários": st.column_config.NumberColumn(format="%d"),
-        },
-    )
+        st.dataframe(
+            display_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Engajamento": st.column_config.NumberColumn(format="%.4f"),
+                "Likes": st.column_config.NumberColumn(format="%d"),
+                "Comentários": st.column_config.NumberColumn(format="%d"),
+            },
+        )
+    else:
+        st.info("Sem dados para os filtros selecionados.")
 else:
-    st.info("Sem dados para o período e filtros selecionados.")
+    st.info("Sem dados para o período selecionado.")

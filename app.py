@@ -1,3 +1,8 @@
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import streamlit as st
 import plotly.express as px
 
@@ -69,10 +74,13 @@ else:
         top_posts = analyzer.get_top_posts(days=30, limit=5)
         if not top_posts.empty:
             for _, post in top_posts.iterrows():
-                caption_preview = (post["caption"][:80] + "...") if len(str(post["caption"])) > 80 else post["caption"]
+                caption_text = str(post["caption"] or "")
+                caption_preview = (caption_text[:80] + "...") if len(caption_text) > 80 else caption_text
+                likes = int(post["likes"])
+                comments = int(post["comments"])
                 st.markdown(
                     f"**@{post['account_username']}** — "
-                    f"❤️ {post['likes']:,} 💬 {post['comments']:,} "
+                    f"❤️ {likes:,} 💬 {comments:,} "
                     f"({post['engagement_rate']:.2%})"
                 )
                 st.caption(caption_preview)
@@ -89,7 +97,10 @@ else:
                 hashtags_df, x="count", y="hashtag", orientation="h",
                 labels={"count": "Frequência", "hashtag": ""},
             )
-            fig.update_layout(height=300, margin=dict(l=0, r=0, t=10, b=0), yaxis=dict(autorange="reversed"))
+            fig.update_layout(
+                height=300, margin=dict(l=0, r=0, t=10, b=0),
+                yaxis=dict(autorange="reversed"),
+            )
             st.plotly_chart(fig, use_container_width=True)
 
     with t_col:

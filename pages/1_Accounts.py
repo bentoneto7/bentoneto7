@@ -1,3 +1,8 @@
+import sys
+import os
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
 import streamlit as st
 
 from core import database, scraper
@@ -25,8 +30,10 @@ with st.form("add_account", clear_on_submit=True):
 
     if submitted and new_username:
         username = new_username.strip().lstrip("@")
-        if database.add_account(username):
-            st.success(f"✅ @{username} adicionado!")
+        if not username:
+            st.warning("Digite um username válido.")
+        elif database.add_account(username):
+            st.success(f"@{username} adicionado!")
             st.rerun()
         else:
             st.warning(f"@{username} já está na lista.")
@@ -40,14 +47,29 @@ if accounts:
     col_scrape, col_count = st.columns([1, 3])
     with col_scrape:
         if st.button("🔄 Coletar Todos", use_container_width=True):
-            with st.spinner("Coletando dados de todos os perfis..."):
-                results = scraper.scrape_all_accounts()
-                for r in results:
-                    if r["success"]:
-                        st.toast(f"✅ @{r['username']}: {r['posts_scraped']} posts")
-                    else:
-                        st.toast(f"❌ @{r['username']}: {r['error']}")
-                st.rerun()
+            progress = st.progress(0, text="Iniciando coleta...")
+            results = []
+            for i, account in enumerate(accounts):
+                progress.progress(
+                    (i) / len(accounts),
+                    text=f"Coletando @{account['username']}... ({i+1}/{len(accounts)})",
+                )
+                result = scraper.scrape_account(account["username"])
+                result["username"] = account["username"]
+                results.append(result)
+
+            progress.progress(1.0, text="Coleta finalizada!")
+
+            success_count = sum(1 for r in results if r["success"])
+            total_posts = sum(r["posts_scraped"] for r in results)
+            st.success(f"{success_count}/{len(accounts)} perfis coletados — {total_posts} posts no total")
+
+            for r in results:
+                if not r["success"]:
+                    st.warning(f"@{r['username']}: {r['error']}")
+
+            st.rerun()
+
     with col_count:
         st.caption(f"{len(accounts)} perfis monitorados")
 
@@ -60,13 +82,23 @@ if accounts:
 
             with c1:
                 name = account.get("full_name") or ""
-                st.markdown(f"**@{account['username']}**")
+                private = " 🔒" if account.get("is_private") else ""
+                st.markdown(f"**@{account['username']}**{private}")
                 if name:
                     st.caption(name)
 
             with c2:
                 followers = account.get("followers") or 0
-                st.metric("Seguidores", f"{followers:,}" if followers else "—")
+                if followers:
+                    if followers >= 1_000_000:
+                        display = f"{followers/1_000_000:.1f}M"
+                    elif followers >= 1_000:
+                        display = f"{followers/1_000:.1f}K"
+                    else:
+                        display = str(followers)
+                    st.metric("Seguidores", display)
+                else:
+                    st.metric("Seguidores", "—")
 
             with c3:
                 last = account.get("last_scraped_at")

@@ -1,6 +1,10 @@
+import sys
+import os
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
 import streamlit as st
 import plotly.express as px
-import pandas as pd
 
 from core import database, analyzer
 
@@ -28,7 +32,12 @@ if not accounts:
     st.info("Adicione perfis na página **Contas** e execute um scrape primeiro.")
     st.stop()
 
-# Top Hashtags
+post_count = database.get_post_count()
+if post_count == 0:
+    st.info("Nenhum post coletado ainda. Vá para a página **Contas** e clique em **Coletar**.")
+    st.stop()
+
+# Top Hashtags + Post Type Distribution
 col_hash, col_type = st.columns(2)
 
 with col_hash:
@@ -102,15 +111,18 @@ if not patterns_df.empty:
 
     # Reorder days
     ordered_days = [day_labels[d] for d in day_order if day_labels[d] in pivot.index]
-    pivot = pivot.reindex(ordered_days)
+    if ordered_days:
+        pivot = pivot.reindex(ordered_days)
 
-    fig = px.imshow(
-        pivot,
-        labels=dict(x="Hora do Dia", y="Dia da Semana", color="Posts"),
-        color_continuous_scale="YlOrRd",
-        aspect="auto",
-    )
-    fig.update_layout(height=350, margin=dict(l=0, r=0, t=10, b=0))
-    st.plotly_chart(fig, use_container_width=True)
+        fig = px.imshow(
+            pivot,
+            labels=dict(x="Hora do Dia", y="Dia da Semana", color="Posts"),
+            color_continuous_scale="YlOrRd",
+            aspect="auto",
+        )
+        fig.update_layout(height=350, margin=dict(l=0, r=0, t=10, b=0))
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Sem dados suficientes para análise de horários.")
 else:
     st.info("Sem dados suficientes para análise de horários.")

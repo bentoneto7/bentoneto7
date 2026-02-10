@@ -1,3 +1,8 @@
+import sys
+import os
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
 import streamlit as st
 
 from core import database, ai_generator
@@ -40,7 +45,18 @@ with tab_generate:
     with col3:
         num_ideas = st.slider("Quantidade:", 3, 10, 5)
 
-    if st.button("🚀 Gerar Ideias", use_container_width=True, type="primary"):
+    # Check API key
+    import config
+    has_api_key = bool(config.ANTHROPIC_API_KEY)
+
+    if not has_api_key:
+        st.warning(
+            "**ANTHROPIC_API_KEY não configurada.** "
+            "Crie um arquivo `.env` na raiz do projeto com sua chave: "
+            "`ANTHROPIC_API_KEY=sk-ant-...`"
+        )
+
+    if st.button("🚀 Gerar Ideias", use_container_width=True, type="primary", disabled=not has_api_key):
         if not selected_accounts:
             st.warning("Selecione pelo menos um perfil.")
         else:
@@ -55,7 +71,7 @@ with tab_generate:
                     # Save to database
                     database.save_ideas(ideas, based_on_accounts=selected_accounts)
 
-                    st.success(f"✅ {len(ideas)} ideias geradas!")
+                    st.success(f"{len(ideas)} ideias geradas!")
 
                     # Display ideas
                     for i, idea in enumerate(ideas, 1):
@@ -74,9 +90,16 @@ with tab_generate:
                             with tag_col:
                                 hashtags = idea.get("suggested_hashtags", [])
                                 if hashtags:
-                                    st.markdown("**Hashtags:** " + " ".join(f"`#{h.lstrip('#')}`" for h in hashtags))
+                                    st.markdown(
+                                        "**Hashtags:** " +
+                                        " ".join(f"`#{h.lstrip('#')}`" for h in hashtags)
+                                    )
                             with fmt_col:
-                                st.markdown(f"**Formato:** {fmt.capitalize()}")
+                                fmt_labels = {
+                                    "image": "Imagem", "video": "Vídeo",
+                                    "carousel": "Carrossel", "reel": "Reel",
+                                }
+                                st.markdown(f"**Formato:** {fmt_labels.get(fmt, fmt.capitalize())}")
 
                             with st.expander("🤔 Por que essa ideia?"):
                                 st.markdown(idea.get("reasoning", "Sem explicação disponível."))
@@ -85,7 +108,6 @@ with tab_generate:
 
                 except Exception as e:
                     st.error(f"Erro ao gerar ideias: {e}")
-                    st.caption("Verifique se a chave ANTHROPIC_API_KEY está configurada no arquivo .env")
 
 with tab_history:
     ideas = database.get_ideas()
@@ -98,35 +120,39 @@ with tab_history:
         if show_saved:
             ideas = [i for i in ideas if i["is_saved"]]
 
-        for idea in ideas:
-            format_icons = {
-                "image": "🖼️", "video": "🎬",
-                "carousel": "🎠", "reel": "🎞️",
-            }
-            fmt = idea.get("suggested_format", "image")
-            icon = format_icons.get(fmt, "📝")
-            saved_mark = "⭐ " if idea["is_saved"] else ""
+        if not ideas:
+            st.info("Nenhuma ideia salva. Clique no botão **Salvar** para favoritar ideias.")
+        else:
+            for idea in ideas:
+                format_icons = {
+                    "image": "🖼️", "video": "🎬",
+                    "carousel": "🎠", "reel": "🎞️",
+                }
+                fmt = idea.get("suggested_format", "image")
+                icon = format_icons.get(fmt, "📝")
+                saved_mark = "⭐ " if idea["is_saved"] else ""
 
-            with st.container():
-                h_col, s_col = st.columns([4, 1])
+                with st.container():
+                    h_col, s_col = st.columns([4, 1])
 
-                with h_col:
-                    st.markdown(f"#### {saved_mark}{icon} {idea['title']}")
-                    st.caption(f"Criado em: {idea['created_at'][:16].replace('T', ' ')} | "
-                             f"Baseado em: {', '.join(idea['based_on_accounts'])}")
-                    st.markdown(idea.get("description", ""))
+                    with h_col:
+                        st.markdown(f"#### {saved_mark}{icon} {idea['title']}")
+                        created = idea.get("created_at", "")[:16].replace("T", " ")
+                        based = ", ".join(idea.get("based_on_accounts", []))
+                        st.caption(f"Criado em: {created} | Baseado em: {based}")
+                        st.markdown(idea.get("description", ""))
 
-                    hashtags = idea.get("suggested_hashtags", [])
-                    if hashtags:
-                        st.markdown(" ".join(f"`#{h.lstrip('#')}`" for h in hashtags))
+                        hashtags = idea.get("suggested_hashtags", [])
+                        if hashtags:
+                            st.markdown(" ".join(f"`#{h.lstrip('#')}`" for h in hashtags))
 
-                with s_col:
-                    label = "⭐ Salvo" if idea["is_saved"] else "☆ Salvar"
-                    if st.button(label, key=f"save_{idea['id']}"):
-                        database.toggle_idea_saved(idea["id"])
-                        st.rerun()
+                    with s_col:
+                        label = "⭐ Salvo" if idea["is_saved"] else "☆ Salvar"
+                        if st.button(label, key=f"save_{idea['id']}"):
+                            database.toggle_idea_saved(idea["id"])
+                            st.rerun()
 
-                with st.expander("Ver raciocínio"):
-                    st.markdown(idea.get("reasoning", ""))
+                    with st.expander("Ver raciocínio"):
+                        st.markdown(idea.get("reasoning", ""))
 
-                st.divider()
+                    st.divider()
