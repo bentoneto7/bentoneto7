@@ -1,10 +1,13 @@
 import base64
+import logging
 import os
 
+import requests
 import instaloader
 
 import config
 
+log = logging.getLogger(__name__)
 
 SESSION_DIR = os.path.expanduser("~/.config/instaloader")
 
@@ -35,6 +38,26 @@ def get_session_username() -> str:
     return config.INSTAGRAM_USERNAME or ""
 
 
+def test_proxy() -> dict:
+    """Test if the configured proxy is working. Returns {ok, ip, error}."""
+    if not config.PROXY_URL:
+        return {"ok": False, "ip": None, "error": "PROXY_URL não configurada"}
+
+    proxies = {"http": config.PROXY_URL, "https": config.PROXY_URL}
+    try:
+        resp = requests.get(
+            "https://ipv4.icanhazip.com",
+            proxies=proxies,
+            timeout=15,
+        )
+        ip = resp.text.strip()
+        log.info("Proxy test OK — IP: %s", ip)
+        return {"ok": True, "ip": ip, "error": None}
+    except Exception as e:
+        log.warning("Proxy test FAILED: %s", e)
+        return {"ok": False, "ip": None, "error": str(e)}
+
+
 def _create_loader() -> instaloader.Instaloader:
     """Create a fresh Instaloader instance with proxy + timeout support."""
     from requests.adapters import HTTPAdapter
@@ -58,40 +81,66 @@ def _create_loader() -> instaloader.Instaloader:
         compress_json=False,
     )
 
-    # Timeout to prevent infinite hangs
-    adapter = _TimeoutAdapter(timeout=30)
-    L.context._session.mount("http://", adapter)
-    L.context._session.mount("https://", adapter)
-
     # Proxy support (critical for login from cloud/datacenter IPs)
+    # Set proxies BEFORE mounting adapters so adapter inherits proxy config
     if config.PROXY_URL:
         L.context._session.proxies = {
             "http": config.PROXY_URL,
             "https": config.PROXY_URL,
         }
+        log.info("Proxy configurado: %s", config.PROXY_URL[:30] + "...")
+
+    # Timeout to prevent infinite hangs
+    adapter = _TimeoutAdapter(timeout=30)
+    L.context._session.mount("http://", adapter)
+    L.context._session.mount("https://", adapter)
 
     return L
 
 
-def _checkpoint_message() -> str:
-    return (
-        "O Instagram bloqueou o login por segurança (Checkpoint).\n\n"
-        "Isso acontece porque o servidor usa um IP de datacenter.\n\n"
-        "**Como resolver:**\n"
-        "1. Abra o Instagram no celular\n"
-        "2. Confirme o alerta de 'atividade suspeita' (se aparecer)\n"
-        "3. Volte aqui e tente logar novamente\n\n"
-        "Se continuar falhando, configure um **PROXY_URL** residencial "
-        "nas variáveis de ambiente do Railway."
-    )
+def _checkpoint_message(proxy_info: dict | None = None) -> str:
+    msg = "O Instagram bloqueou o login por segurança (Checkpoint).\n\n"
+
+    if proxy_info and proxy_info.get("ok"):
+        msg += (
+            f"**Proxy ativo** — IP usado: `{proxy_info['ip']}`\n\n"
+            "O proxy está funcionando, mas o Instagram ainda bloqueou. "
+            "Possíveis causas:\n"
+            "- O IP do proxy já foi marcado pelo Instagram\n"
+            "- A conta tem proteção extra ativada\n\n"
+            "**Tente:**\n"
+            "1. Abra o Instagram no celular e confirme o alerta de segurança\n"
+            "2. Aguarde 5-10 minutos e tente novamente\n"
+            "3. No IPRoyal, gere uma nova sessão (mude o session ID)\n"
+        )
+    elif proxy_info and not proxy_info.get("ok"):
+        msg += (
+            f"**Proxy NÃO está funcionando!** Erro: {proxy_info.get('error', 'desconhecido')}\n\n"
+            "O login foi feito sem proxy (IP do datacenter), por isso foi bloqueado.\n\n"
+            "**Verifique:**\n"
+            "1. A variável `PROXY_URL` no Railway está correta?\n"
+            "2. Formato esperado: `http://user:pass@host:port`\n"
+            "3. O proxy está ativo no painel do IPRoyal?\n"
+        )
+    else:
+        msg += (
+            "**PROXY_URL não configurada.** O login foi feito com o IP do Railway (datacenter).\n\n"
+            "**Configure um proxy residencial:**\n"
+            "1. Adicione `PROXY_URL` nas variáveis de ambiente do Railway\n"
+            "2. Formato: `http://user:pass@host:port`\n"
+        )
+
+    return msg
 
 
-def _classify_connection_error(e: Exception) -> str:
+def _classify_connection_error(e: Exception, proxy_info: dict | None = None) -> str:
     error_str = str(e).lower()
     if "checkpoint" in error_str or "challenge" in error_str:
-        return _checkpoint_message()
+        return _checkpoint_message(proxy_info)
     if "429" in error_str or "too many" in error_str:
         return "Instagram bloqueou temporariamente (rate limit). Aguarde alguns minutos."
+    if proxy_info and not proxy_info.get("ok"):
+        return f"Erro de conexão (proxy com problema): {e}"
     return f"Erro de conexão: {e}"
 
 
@@ -100,6 +149,10 @@ def login(username: str, password: str, remember: bool = False) -> dict:
 
     Returns: {success: bool, needs_2fa: bool, error: str}
     """
+    # Test proxy before attempting login
+    proxy_info = test_proxy() if config.PROXY_URL else None
+    log.info("Login attempt — proxy_info: %s", proxy_info)
+
     L = _create_loader()
 
     try:
@@ -125,12 +178,12 @@ def login(username: str, password: str, remember: bool = False) -> dict:
         return {"success": False, "needs_2fa": False, "error": "Usuário ou senha incorretos."}
 
     except instaloader.exceptions.ConnectionException as e:
-        return {"success": False, "needs_2fa": False, "error": _classify_connection_error(e)}
+        return {"success": False, "needs_2fa": False, "error": _classify_connection_error(e, proxy_info)}
 
     except Exception as e:
         error_str = str(e).lower()
         if "checkpoint" in error_str or "challenge" in error_str:
-            return {"success": False, "needs_2fa": False, "error": _checkpoint_message()}
+            return {"success": False, "needs_2fa": False, "error": _checkpoint_message(proxy_info)}
         return {"success": False, "needs_2fa": False, "error": f"Erro: {e}"}
 
 
@@ -140,6 +193,7 @@ def login_2fa(username: str, password: str, code: str, remember: bool = False) -
     Re-creates the login flow and immediately provides the 2FA code.
     Returns: {success: bool, error: str}
     """
+    proxy_info = test_proxy() if config.PROXY_URL else None
     L = _create_loader()
 
     try:
@@ -172,12 +226,12 @@ def login_2fa(username: str, password: str, code: str, remember: bool = False) -
         return {"success": False, "error": "Usuário ou senha incorretos."}
 
     except instaloader.exceptions.ConnectionException as e:
-        return {"success": False, "error": _classify_connection_error(e)}
+        return {"success": False, "error": _classify_connection_error(e, proxy_info)}
 
     except Exception as e:
         error_str = str(e).lower()
         if "checkpoint" in error_str or "challenge" in error_str:
-            return {"success": False, "error": _checkpoint_message()}
+            return {"success": False, "error": _checkpoint_message(proxy_info)}
         return {"success": False, "error": f"Erro: {e}"}
 
 
