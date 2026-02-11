@@ -54,43 +54,152 @@ if "setup_done" not in st.session_state:
 
 
 # ═══════════════════════════════════════════
-# LOGIN SCREEN
+# LOGIN SCREEN (SaaS-style)
 # ═══════════════════════════════════════════
-def show_login():
-    st.markdown(
-        """
-        <div style="text-align: center; padding: 2rem 0;">
-            <h1 style="font-size: 3rem;">📡 Content Radar</h1>
-            <p style="font-size: 1.2rem; color: #888;">
-                Sistema de radar de conteúdo para Instagram
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
-    col_left, col_center, col_right = st.columns([1, 2, 1])
+_LOGIN_CSS = """
+<style>
+/* Hide sidebar + header + footer on login */
+[data-testid="stSidebar"],
+[data-testid="stSidebarNav"],
+header[data-testid="stHeader"],
+#MainMenu, footer {
+    display: none !important;
+}
+
+/* Full-height centered layout */
+[data-testid="stAppViewContainer"] > .main {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+}
+
+/* Login card */
+.login-card {
+    width: 100%;
+    max-width: 420px;
+    margin: 0 auto;
+    padding: 2.5rem 2rem 2rem;
+    background: #16181D;
+    border: 1px solid #2A2D35;
+    border-radius: 16px;
+}
+
+/* Brand header */
+.login-brand {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+.login-brand-icon {
+    font-size: 2.8rem;
+    line-height: 1;
+    margin-bottom: 0.5rem;
+}
+.login-brand h1 {
+    font-size: 1.6rem;
+    font-weight: 700;
+    margin: 0;
+    color: #FAFAFA;
+    letter-spacing: -0.5px;
+}
+.login-brand p {
+    color: #6B7280;
+    font-size: 0.9rem;
+    margin: 0.3rem 0 0;
+}
+
+/* Divider */
+.login-divider {
+    border: none;
+    border-top: 1px solid #2A2D35;
+    margin: 1.5rem 0;
+}
+
+/* Footer text */
+.login-footer {
+    text-align: center;
+    color: #4B5563;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    margin-top: 1.5rem;
+}
+.login-footer a {
+    color: #6B7280;
+    text-decoration: none;
+}
+
+/* 2FA badge */
+.tfa-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 1rem;
+    background: rgba(99, 102, 241, 0.1);
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    border-radius: 8px;
+    color: #A5B4FC;
+    font-size: 0.85rem;
+    margin-bottom: 1rem;
+}
+
+/* Security badge */
+.security-badges {
+    display: flex;
+    justify-content: center;
+    gap: 1.2rem;
+    margin-top: 1rem;
+}
+.security-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    color: #4B5563;
+    font-size: 0.75rem;
+}
+</style>
+"""
+
+
+def show_login():
+    st.markdown(_LOGIN_CSS, unsafe_allow_html=True)
+
+    # Center the card using columns
+    _, col_center, _ = st.columns([1, 2, 1])
 
     with col_center:
+        st.markdown(
+            '<div class="login-card">'
+            '<div class="login-brand">'
+            '<div class="login-brand-icon">📡</div>'
+            "<h1>Content Radar</h1>"
+            "<p>Monitore tendências e gere ideias para o Instagram</p>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
         if st.session_state.login_step == "credentials":
             _show_credentials_form()
         elif st.session_state.login_step == "2fa":
             _show_2fa_form()
 
-        st.divider()
         st.markdown(
-            "<p style='text-align:center; color:#666; font-size:0.85rem;'>"
-            "Suas credenciais são usadas apenas para autenticar com a API do Instagram.<br>"
-            "Nenhuma senha é armazenada — apenas o cookie de sessão."
-            "</p>",
+            '<hr class="login-divider">'
+            '<div class="security-badges">'
+            '<span class="security-badge">🔒 Conexão segura</span>'
+            '<span class="security-badge">🍪 Só cookies de sessão</span>'
+            '<span class="security-badge">🚫 Senha não armazenada</span>'
+            "</div>"
+            '<div class="login-footer">'
+            "Suas credenciais autenticam diretamente com o Instagram.<br>"
+            "Nenhuma senha é salva — apenas o cookie de sessão temporário."
+            "</div>"
+            "</div>",  # close login-card
             unsafe_allow_html=True,
         )
 
 
 def _show_credentials_form():
-    st.markdown("### Entrar com Instagram")
-    st.caption("Faça login para começar a monitorar perfis e analisar conteúdo")
-
     with st.form("login_form"):
         username = st.text_input(
             "Usuário do Instagram",
@@ -103,7 +212,7 @@ def _show_credentials_form():
             placeholder="Sua senha",
         )
         remember = st.checkbox(
-            "Lembrar meu login",
+            "Lembrar por 30 dias",
             value=True,
             help="Manter sessão ativa por 30 dias. Sem isso, expira em 24h.",
         )
@@ -139,23 +248,21 @@ def _show_credentials_form():
                 st.session_state.pending_username = username
                 st.session_state.pending_password = password
                 st.session_state.pending_remember = remember
-                st.info("Código de autenticação de dois fatores necessário.")
                 st.rerun()
             else:
                 st.error(result["error"])
 
 
 def _show_2fa_form():
-    st.markdown("### Verificação em Duas Etapas")
-    st.info(
-        f"Digite o código de autenticação enviado para seu dispositivo "
-        f"(conta: **@{st.session_state.pending_username}**)"
+    st.markdown(
+        f'<div class="tfa-badge">🛡️ Verificação em duas etapas — @{st.session_state.pending_username}</div>',
+        unsafe_allow_html=True,
     )
 
     with st.form("2fa_form"):
         code = st.text_input(
-            "Código 2FA",
-            placeholder="123456",
+            "Código de autenticação",
+            placeholder="000000",
             max_chars=8,
             help="Código de 6 dígitos do seu app de autenticação ou SMS",
         )
