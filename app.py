@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import streamlit as st
 import plotly.express as px
 
-from core import database, analyzer, auth
+from core import database, analyzer, auth, scraper
 
 # Initialize database
 database.init_db()
@@ -25,14 +25,20 @@ st.set_page_config(
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = auth.is_logged_in()
 if "login_step" not in st.session_state:
-    st.session_state.login_step = "credentials"  # "credentials" or "2fa"
+    st.session_state.login_step = "credentials"  # "credentials", "2fa", "suggestions"
 if "pending_loader" not in st.session_state:
     st.session_state.pending_loader = None
 if "pending_username" not in st.session_state:
     st.session_state.pending_username = ""
+if "suggested_profiles" not in st.session_state:
+    st.session_state.suggested_profiles = []
+if "setup_done" not in st.session_state:
+    st.session_state.setup_done = False
 
 
-# ─── LOGIN SCREEN ───
+# ═══════════════════════════════════════════
+# LOGIN SCREEN
+# ═══════════════════════════════════════════
 def show_login():
     st.markdown(
         """
@@ -46,13 +52,9 @@ def show_login():
         unsafe_allow_html=True,
     )
 
-    # Center the login form
     col_left, col_center, col_right = st.columns([1, 2, 1])
 
     with col_center:
-        st.markdown("### Entrar com Instagram")
-        st.caption("Faça login para começar a monitorar perfis e analisar conteúdo")
-
         if st.session_state.login_step == "credentials":
             _show_credentials_form()
         elif st.session_state.login_step == "2fa":
@@ -69,6 +71,9 @@ def show_login():
 
 
 def _show_credentials_form():
+    st.markdown("### Entrar com Instagram")
+    st.caption("Faça login para começar a monitorar perfis e analisar conteúdo")
+
     with st.form("login_form"):
         username = st.text_input(
             "Usuário do Instagram",
@@ -99,6 +104,8 @@ def _show_credentials_form():
 
             if result["success"]:
                 st.session_state.logged_in = True
+                st.session_state.pending_username = username
+                st.session_state.setup_done = False
                 st.success("Login realizado com sucesso!")
                 st.rerun()
             elif result.get("needs_2fa"):
@@ -112,6 +119,7 @@ def _show_credentials_form():
 
 
 def _show_2fa_form():
+    st.markdown("### Verificação em Duas Etapas")
     st.info(
         f"Digite o código de autenticação enviado para seu dispositivo "
         f"(conta: **@{st.session_state.pending_username}**)"
@@ -150,6 +158,7 @@ def _show_2fa_form():
                 st.session_state.logged_in = True
                 st.session_state.login_step = "credentials"
                 st.session_state.pending_loader = None
+                st.session_state.setup_done = False
                 st.success("Login realizado com sucesso!")
                 st.rerun()
             else:
@@ -161,7 +170,164 @@ def _show_2fa_form():
             st.rerun()
 
 
-# ─── DASHBOARD ───
+# ═══════════════════════════════════════════
+# SETUP: POST-LOGIN (scrape + suggestions)
+# ═══════════════════════════════════════════
+def show_setup():
+    """First-time setup after login: scrape user's profile and suggest similar accounts."""
+    session_user = auth.get_session_username()
+
+    # Sidebar
+    with st.sidebar:
+        st.markdown(f"Logado como **@{session_user}**")
+        if st.button("Sair", use_container_width=True, key="logout_setup"):
+            auth.logout()
+            st.session_state.logged_in = False
+            st.session_state.setup_done = False
+            st.rerun()
+        st.divider()
+
+    st.markdown(
+        """
+        <div style="text-align: center; padding: 1rem 0;">
+            <h1 style="font-size: 2.5rem;">📡 Configurando seu Radar</h1>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Step 1: Scrape the user's own profile
+    st.subheader(f"1. Analisando seu perfil @{session_user}")
+
+    # Auto-add user's own account if not already added
+    database.add_account(session_user)
+
+    if f"scrape_done_{session_user}" not in st.session_state:
+        with st.spinner(f"Coletando posts de @{session_user}..."):
+            result = scraper.scrape_account(session_user, max_posts=15)
+
+        if result["success"]:
+            st.success(f"{result['posts_scraped']} posts coletados do seu perfil!")
+            st.session_state[f"scrape_done_{session_user}"] = True
+        else:
+            st.warning(f"Não foi possível coletar posts: {result['error']}")
+            st.session_state[f"scrape_done_{session_user}"] = True
+    else:
+        st.success("Perfil já analisado!")
+
+    st.divider()
+
+    # Step 2: Suggest similar profiles
+    st.subheader("2. Perfis sugeridos para seu Radar")
+    st.caption("Baseado nas contas que você segue, selecionamos perfis relevantes para monitorar")
+
+    # Load suggestions if not done yet
+    if not st.session_state.suggested_profiles:
+        with st.spinner("Buscando perfis similares..."):
+            suggestions = scraper.get_similar_profiles(session_user, limit=5)
+            st.session_state.suggested_profiles = suggestions
+
+    suggestions = st.session_state.suggested_profiles
+
+    if suggestions:
+        # Show each suggestion with add button
+        selected = []
+        for i, profile in enumerate(suggestions):
+            with st.container():
+                col_info, col_stats, col_action = st.columns([3, 1, 1])
+
+                with col_info:
+                    st.markdown(f"**@{profile['username']}**")
+                    if profile.get("full_name"):
+                        st.caption(profile["full_name"])
+                    if profile.get("bio"):
+                        st.caption(profile["bio"][:100])
+
+                with col_stats:
+                    followers = profile.get("followers", 0)
+                    if followers >= 1_000_000:
+                        display = f"{followers/1_000_000:.1f}M"
+                    elif followers >= 1_000:
+                        display = f"{followers/1_000:.1f}K"
+                    else:
+                        display = str(followers)
+                    st.metric("Seguidores", display)
+
+                with col_action:
+                    key = f"add_suggestion_{profile['username']}"
+                    already_added = any(
+                        a["username"] == profile["username"]
+                        for a in database.get_accounts()
+                    )
+                    if already_added:
+                        st.success("Adicionado")
+                    elif st.button("➕ Adicionar", key=key, use_container_width=True):
+                        database.add_account(profile["username"])
+                        st.rerun()
+
+                st.divider()
+
+        # Add all button
+        col_all, col_skip = st.columns(2)
+        with col_all:
+            if st.button("➕ Adicionar Todos ao Radar", use_container_width=True, type="primary"):
+                for profile in suggestions:
+                    database.add_account(profile["username"])
+                st.success("Todos os perfis adicionados!")
+                st.session_state.setup_done = True
+                st.rerun()
+
+        with col_skip:
+            if st.button("Pular e ir ao Dashboard", use_container_width=True):
+                st.session_state.setup_done = True
+                st.rerun()
+    else:
+        st.info(
+            "Não foi possível buscar sugestões automaticamente. "
+            "Você pode adicionar perfis manualmente na página **Contas**."
+        )
+        if st.button("Ir ao Dashboard", use_container_width=True, type="primary"):
+            st.session_state.setup_done = True
+            st.rerun()
+
+    st.divider()
+
+    # Step 3: Scrape all added accounts
+    accounts = database.get_accounts()
+    added_count = len([a for a in accounts if a["username"] != session_user])
+
+    if added_count > 0:
+        st.subheader("3. Coletar dados dos perfis adicionados")
+        if st.button("🔄 Coletar Todos Agora", use_container_width=True, type="primary"):
+            progress = st.progress(0, text="Iniciando coleta...")
+            results = []
+            non_self = [a for a in accounts if a["username"] != session_user]
+            for i, account in enumerate(non_self):
+                progress.progress(
+                    i / len(non_self),
+                    text=f"Coletando @{account['username']}... ({i+1}/{len(non_self)})",
+                )
+                result = scraper.scrape_account(account["username"], max_posts=15)
+                result["username"] = account["username"]
+                results.append(result)
+
+            progress.progress(1.0, text="Coleta finalizada!")
+
+            success_count = sum(1 for r in results if r["success"])
+            total_posts = sum(r["posts_scraped"] for r in results)
+            st.success(f"{success_count}/{len(non_self)} perfis coletados — {total_posts} posts!")
+
+            for r in results:
+                if not r["success"]:
+                    st.warning(f"@{r['username']}: {r['error']}")
+
+            st.session_state.setup_done = True
+            st.rerun()
+
+
+# ═══════════════════════════════════════════
+# DASHBOARD
+# ═══════════════════════════════════════════
 def show_dashboard():
     # Sidebar: session info + logout
     with st.sidebar:
@@ -171,6 +337,8 @@ def show_dashboard():
             if st.button("Sair", use_container_width=True):
                 auth.logout()
                 st.session_state.logged_in = False
+                st.session_state.setup_done = False
+                st.session_state.suggested_profiles = []
                 st.rerun()
             st.divider()
 
@@ -271,8 +439,12 @@ def show_dashboard():
                 st.plotly_chart(fig, use_container_width=True)
 
 
-# ─── ROUTING ───
-if st.session_state.logged_in:
-    show_dashboard()
-else:
+# ═══════════════════════════════════════════
+# ROUTING
+# ═══════════════════════════════════════════
+if not st.session_state.logged_in:
     show_login()
+elif not st.session_state.setup_done and database.get_post_count() == 0:
+    show_setup()
+else:
+    show_dashboard()

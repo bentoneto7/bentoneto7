@@ -146,3 +146,88 @@ def scrape_all_accounts() -> list[dict]:
         time.sleep(config.SCRAPE_DELAY_SECONDS)
 
     return results
+
+
+def get_similar_profiles(username: str, limit: int = 5) -> list[dict]:
+    """Get similar profiles based on a user's followees.
+
+    Analyzes the accounts followed by the given user and returns
+    public profiles with the most followers (likely influencers/creators).
+
+    Returns list of dicts: {username, full_name, followers, bio, is_private}
+    """
+    if not auth.is_logged_in():
+        return []
+
+    L = _get_loader()
+
+    try:
+        profile = instaloader.Profile.from_username(L.context, username)
+    except Exception:
+        return []
+
+    suggestions = []
+    seen = set()
+    checked = 0
+
+    try:
+        for followee in profile.get_followees():
+            if checked >= 50:  # Check up to 50 followees to find good suggestions
+                break
+            checked += 1
+
+            if followee.username in seen:
+                continue
+            seen.add(followee.username)
+
+            # Skip private accounts and very small accounts
+            if followee.is_private:
+                continue
+            if followee.followers < 10000:
+                continue
+
+            suggestions.append({
+                "username": followee.username,
+                "full_name": followee.full_name or "",
+                "followers": followee.followers,
+                "bio": (followee.biography or "")[:150],
+                "is_private": followee.is_private,
+            })
+
+            time.sleep(0.3)  # Small delay to avoid rate limits
+
+    except instaloader.exceptions.ConnectionException:
+        pass  # Return what we have so far
+    except Exception:
+        pass
+
+    # Sort by followers (most popular first) and return top N
+    suggestions.sort(key=lambda x: x["followers"], reverse=True)
+    return suggestions[:limit]
+
+
+def get_profile_info(username: str) -> dict:
+    """Get basic profile info without scraping posts.
+
+    Returns: {success, username, full_name, followers, following, bio, is_private}
+    """
+    if not auth.is_logged_in():
+        return {"success": False, "error": "Não autenticado"}
+
+    L = _get_loader()
+
+    try:
+        profile = instaloader.Profile.from_username(L.context, username)
+        return {
+            "success": True,
+            "username": profile.username,
+            "full_name": profile.full_name,
+            "followers": profile.followers,
+            "following": profile.followees,
+            "bio": profile.biography or "",
+            "is_private": profile.is_private,
+        }
+    except instaloader.exceptions.ProfileNotExistsException:
+        return {"success": False, "error": f"Perfil @{username} não existe"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
