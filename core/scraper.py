@@ -3,9 +3,21 @@ from itertools import islice
 from datetime import datetime
 
 import instaloader
+from requests.adapters import HTTPAdapter
 
 import config
 from core import database, auth
+
+
+class _TimeoutAdapter(HTTPAdapter):
+    """HTTP adapter that enforces a default timeout on all requests."""
+    def __init__(self, timeout=30, **kwargs):
+        self.timeout = timeout
+        super().__init__(**kwargs)
+
+    def send(self, *args, **kwargs):
+        kwargs.setdefault("timeout", self.timeout)
+        return super().send(*args, **kwargs)
 
 
 def _get_loader() -> instaloader.Instaloader:
@@ -18,6 +30,11 @@ def _get_loader() -> instaloader.Instaloader:
         save_metadata=False,
         compress_json=False,
     )
+
+    # Enforce 30s timeout on all HTTP requests to prevent infinite hangs
+    adapter = _TimeoutAdapter(timeout=30)
+    L.context._session.mount("http://", adapter)
+    L.context._session.mount("https://", adapter)
 
     # Configure proxy if set (needed for cloud/datacenter IPs)
     if config.PROXY_URL:
@@ -80,6 +97,8 @@ def scrape_account(username: str, max_posts: int = None) -> dict:
         else:
             msg = f"Erro de conexão com Instagram: {e}"
         return {"success": False, "posts_scraped": 0, "error": msg}
+    except (TimeoutError, OSError) as e:
+        return {"success": False, "posts_scraped": 0, "error": "Timeout ao conectar ao Instagram. Tente novamente."}
     except Exception as e:
         return {"success": False, "posts_scraped": 0, "error": f"Erro inesperado: {e}"}
 
@@ -143,6 +162,9 @@ def scrape_account(username: str, max_posts: int = None) -> dict:
                 errors.append("Sessão expirada. Faça login novamente.")
             else:
                 errors.append(f"Erro de conexão: {e}")
+            break
+        except (TimeoutError, OSError):
+            errors.append("Timeout na requisição. Coleta parcial.")
             break
         except Exception as e:
             errors.append(f"Erro no post: {e}")
