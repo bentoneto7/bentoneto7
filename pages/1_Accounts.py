@@ -5,7 +5,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 import streamlit as st
 
-from core import database, scraper, auth
+from core import database, scraper, auth, loaders
 from core.page_guard import require_login
 
 database.init_db()
@@ -63,23 +63,31 @@ if accounts:
             import time as _time
 
             progress = st.progress(0, text="Iniciando coleta...")
-            status_text = st.empty()
+            loader_ph = st.empty()
             results = []
             total_start = _time.time()
             max_total_time = 120  # 2 min total max
 
             for i, account in enumerate(accounts):
                 if _time.time() - total_start > max_total_time:
-                    status_text.warning(
+                    loader_ph.warning(
                         f"Tempo total excedido (2 min). Coletados {i}/{len(accounts)} perfis."
                     )
                     break
 
                 progress.progress(
-                    (i) / len(accounts),
-                    text=f"Coletando @{account['username']}... ({i+1}/{len(accounts)})",
+                    i / len(accounts),
+                    text=loaders.progress_loader(
+                        "scrape_account", i, len(accounts),
+                        username=account["username"],
+                    ),
                 )
-                status_text.info(f"Coletando @{account['username']}... (limite: 45s por perfil)")
+                with loader_ph.container():
+                    loaders.radar_loader(
+                        "scrape_account",
+                        subtitle=f"{i + 1} de {len(accounts)} perfis — limite: 45s cada",
+                        username=account["username"],
+                    )
 
                 result = scraper.scrape_account(account["username"])
                 result["username"] = account["username"]
@@ -90,12 +98,12 @@ if accounts:
                     err = result["error"].lower()
                     if "sessão expirada" in err or "login" in err:
                         progress.progress(1.0, text="Coleta interrompida")
-                        status_text.empty()
+                        loader_ph.empty()
                         st.error("Sessão expirada. Faça logout e login novamente na página principal.")
                         break
 
-            progress.progress(1.0, text="Coleta finalizada!")
-            status_text.empty()
+            progress.progress(1.0, text=loaders.get_message("scrape_done"))
+            loader_ph.empty()
 
             success_count = sum(1 for r in results if r["success"])
             total_posts = sum(r["posts_scraped"] for r in results)
@@ -148,10 +156,15 @@ if accounts:
 
             with c4:
                 if st.button("Coletar", key=f"scrape_{account['username']}"):
-                    status = st.empty()
-                    status.info(f"Coletando @{account['username']}... (limite: 45s)")
+                    loader_single = st.empty()
+                    with loader_single.container():
+                        loaders.radar_loader(
+                            "scrape_account",
+                            subtitle="limite: 45s",
+                            username=account["username"],
+                        )
                     result = scraper.scrape_account(account["username"])
-                    status.empty()
+                    loader_single.empty()
                     if result["success"]:
                         msg = f"{result['posts_scraped']} posts coletados"
                         if result.get("error"):

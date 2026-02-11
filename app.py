@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import streamlit as st
 import plotly.express as px
 
-from core import database, analyzer, auth, scraper, ai_generator
+from core import database, analyzer, auth, scraper, ai_generator, loaders
 
 # Initialize database
 database.init_db()
@@ -101,8 +101,11 @@ def _show_credentials_form():
 
             username = username.strip().lstrip("@")
 
-            with st.spinner("Conectando ao Instagram..."):
-                result = auth.login(username, password)
+            login_loader = st.empty()
+            with login_loader.container():
+                loaders.radar_loader("login")
+            result = auth.login(username, password)
+            login_loader.empty()
 
             if result["success"]:
                 st.session_state.logged_in = True
@@ -150,12 +153,15 @@ def _show_2fa_form():
             )
 
         if submitted and code:
-            with st.spinner("Verificando código..."):
-                result = auth.login_2fa(
-                    st.session_state.pending_username,
-                    st.session_state.pending_password,
-                    code.strip(),
-                )
+            tfa_loader = st.empty()
+            with tfa_loader.container():
+                loaders.radar_loader("2fa")
+            result = auth.login_2fa(
+                st.session_state.pending_username,
+                st.session_state.pending_password,
+                code.strip(),
+            )
+            tfa_loader.empty()
 
             if result["success"]:
                 st.session_state.logged_in = True
@@ -208,12 +214,13 @@ def show_setup():
     database.add_account(session_user)
 
     if f"scrape_done_{session_user}" not in st.session_state:
-        status_placeholder = st.empty()
-        status_placeholder.info(f"Coletando posts de @{session_user}... (limite: 45s)")
+        loader_ph = st.empty()
+        with loader_ph.container():
+            loaders.radar_loader("scrape_self", subtitle=f"@{session_user} — limite: 45s")
 
         result = scraper.scrape_account(session_user, max_posts=20)
 
-        status_placeholder.empty()
+        loader_ph.empty()
 
         if result["success"]:
             st.success(f"{result['posts_scraped']} posts coletados do seu perfil!")
@@ -250,7 +257,8 @@ def show_setup():
             st.session_state.niche_analysis = {"niche": "", "niche_description": "", "creators": []}
         else:
             ai_status = st.empty()
-            ai_status.info("Analisando seu conteúdo com IA para identificar seu nicho...")
+            with ai_status.container():
+                loaders.radar_loader("ai_analysis", subtitle="Identificando seu nicho e creators similares")
 
             try:
                 # Get user's data for AI analysis
@@ -369,7 +377,7 @@ def show_setup():
             import time as _time
 
             progress = st.progress(0, text="Iniciando coleta...")
-            status_text = st.empty()
+            loader_ph = st.empty()
             results = []
             non_self = [a for a in accounts if a["username"] != session_user]
             total_start = _time.time()
@@ -378,15 +386,26 @@ def show_setup():
             for i, account in enumerate(non_self):
                 # Check total time limit
                 if _time.time() - total_start > max_total_time:
-                    status_text.warning(
+                    loader_ph.warning(
                         f"Tempo total excedido (2 min). Coletados {i}/{len(non_self)} perfis. "
                         "Os demais podem ser coletados na página Contas."
                     )
                     break
 
                 pct = i / len(non_self)
-                progress.progress(pct, text=f"Coletando @{account['username']}... ({i+1}/{len(non_self)})")
-                status_text.info(f"Coletando @{account['username']}... (limite: 45s por perfil)")
+                progress.progress(
+                    pct,
+                    text=loaders.progress_loader(
+                        "scrape_account", i, len(non_self),
+                        username=account["username"],
+                    ),
+                )
+                with loader_ph.container():
+                    loaders.radar_loader(
+                        "scrape_account",
+                        subtitle=f"{i + 1} de {len(non_self)} perfis — limite: 45s cada",
+                        username=account["username"],
+                    )
 
                 result = scraper.scrape_account(account["username"], max_posts=15)
                 result["username"] = account["username"]
@@ -397,15 +416,15 @@ def show_setup():
                     err = result["error"].lower()
                     if "sessão expirada" in err or "login" in err:
                         progress.progress(1.0, text="Coleta interrompida")
-                        status_text.empty()
+                        loader_ph.empty()
                         st.error(
                             "Sessão do Instagram expirada. Faça logout e login novamente."
                         )
                         st.session_state.setup_done = True
                         st.rerun()
 
-            progress.progress(1.0, text="Coleta finalizada!")
-            status_text.empty()
+            progress.progress(1.0, text=loaders.get_message("scrape_done"))
+            loader_ph.empty()
 
             success_count = sum(1 for r in results if r["success"])
             total_posts = sum(r["posts_scraped"] for r in results)
