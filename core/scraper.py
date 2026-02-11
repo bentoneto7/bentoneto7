@@ -105,7 +105,17 @@ def scrape_account(username: str, max_posts: int = None) -> dict:
     )
 
     posts_scraped = 0
+    errors = []
+    timeout_seconds = 120  # Max 2 minutes per account
+    start_time = time.time()
+
     for post in islice(profile.get_posts(), max_posts):
+        # Check total timeout
+        elapsed = time.time() - start_time
+        if elapsed > timeout_seconds:
+            errors.append(f"Timeout: coleta parou após {int(elapsed)}s ({posts_scraped} posts coletados)")
+            break
+
         try:
             followers = profile.followers if profile.followers > 0 else 1
             engagement_rate = (post.likes + post.comments) / followers
@@ -125,13 +135,26 @@ def scrape_account(username: str, max_posts: int = None) -> dict:
 
             database.upsert_post(post_data)
             posts_scraped += 1
-        except instaloader.exceptions.ConnectionException:
-            # Rate limited mid-scrape, return what we got so far
+        except instaloader.exceptions.ConnectionException as e:
+            error_str = str(e).lower()
+            if "429" in error_str or "too many" in error_str:
+                errors.append("Rate limit atingido pelo Instagram.")
+            elif "redirect" in error_str or "login" in error_str:
+                errors.append("Sessão expirada. Faça login novamente.")
+            else:
+                errors.append(f"Erro de conexão: {e}")
             break
-        except Exception:
+        except Exception as e:
+            errors.append(f"Erro no post: {e}")
             continue
 
-    return {"success": True, "posts_scraped": posts_scraped, "error": None}
+    if posts_scraped > 0:
+        error_msg = "; ".join(errors) if errors else None
+        return {"success": True, "posts_scraped": posts_scraped, "error": error_msg}
+    elif errors:
+        return {"success": False, "posts_scraped": 0, "error": "; ".join(errors)}
+    else:
+        return {"success": True, "posts_scraped": 0, "error": "Nenhum post encontrado."}
 
 
 def scrape_all_accounts() -> list[dict]:

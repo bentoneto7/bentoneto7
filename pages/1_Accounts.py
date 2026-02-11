@@ -59,19 +59,43 @@ accounts = database.get_accounts()
 if accounts:
     col_scrape, col_count = st.columns([1, 3])
     with col_scrape:
-        if st.button("🔄 Coletar Todos", use_container_width=True):
+        if st.button("Coletar Todos", use_container_width=True):
+            import time as _time
+
             progress = st.progress(0, text="Iniciando coleta...")
+            status_text = st.empty()
             results = []
+            total_start = _time.time()
+            max_total_time = 300  # 5 min total max
+
             for i, account in enumerate(accounts):
+                if _time.time() - total_start > max_total_time:
+                    status_text.warning(
+                        f"Tempo total excedido (5 min). Coletados {i}/{len(accounts)} perfis."
+                    )
+                    break
+
                 progress.progress(
                     (i) / len(accounts),
                     text=f"Coletando @{account['username']}... ({i+1}/{len(accounts)})",
                 )
+                status_text.info(f"Coletando @{account['username']}... (limite: 2 min por perfil)")
+
                 result = scraper.scrape_account(account["username"])
                 result["username"] = account["username"]
                 results.append(result)
 
+                # If session expired, stop and notify
+                if not result["success"] and result.get("error", ""):
+                    err = result["error"].lower()
+                    if "sessão expirada" in err or "login" in err:
+                        progress.progress(1.0, text="Coleta interrompida")
+                        status_text.empty()
+                        st.error("Sessão expirada. Faça logout e login novamente na página principal.")
+                        break
+
             progress.progress(1.0, text="Coleta finalizada!")
+            status_text.empty()
 
             success_count = sum(1 for r in results if r["success"])
             total_posts = sum(r["posts_scraped"] for r in results)
@@ -80,6 +104,8 @@ if accounts:
             for r in results:
                 if not r["success"]:
                     st.warning(f"@{r['username']}: {r['error']}")
+                elif r.get("error"):
+                    st.info(f"@{r['username']}: {r['error']}")
 
             st.rerun()
 
@@ -121,14 +147,19 @@ if accounts:
                     st.caption("Nunca coletado")
 
             with c4:
-                if st.button("🔄 Coletar", key=f"scrape_{account['username']}"):
-                    with st.spinner(f"Coletando @{account['username']}..."):
-                        result = scraper.scrape_account(account["username"])
-                        if result["success"]:
-                            st.success(f"{result['posts_scraped']} posts coletados")
-                        else:
-                            st.error(result["error"])
-                        st.rerun()
+                if st.button("Coletar", key=f"scrape_{account['username']}"):
+                    status = st.empty()
+                    status.info(f"Coletando @{account['username']}... (limite: 2 min)")
+                    result = scraper.scrape_account(account["username"])
+                    status.empty()
+                    if result["success"]:
+                        msg = f"{result['posts_scraped']} posts coletados"
+                        if result.get("error"):
+                            msg += f" (aviso: {result['error']})"
+                        st.success(msg)
+                    else:
+                        st.error(f"Erro: {result['error']}")
+                    st.rerun()
 
             with c5:
                 if st.button("🗑️", key=f"remove_{account['username']}"):

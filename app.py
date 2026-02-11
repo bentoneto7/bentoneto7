@@ -25,11 +25,11 @@ st.set_page_config(
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = auth.is_logged_in()
 if "login_step" not in st.session_state:
-    st.session_state.login_step = "credentials"  # "credentials", "2fa", "suggestions"
-if "pending_loader" not in st.session_state:
-    st.session_state.pending_loader = None
+    st.session_state.login_step = "credentials"  # "credentials", "2fa"
 if "pending_username" not in st.session_state:
     st.session_state.pending_username = ""
+if "pending_password" not in st.session_state:
+    st.session_state.pending_password = ""
 if "suggested_profiles" not in st.session_state:
     st.session_state.suggested_profiles = []
 if "niche_analysis" not in st.session_state:
@@ -107,13 +107,14 @@ def _show_credentials_form():
             if result["success"]:
                 st.session_state.logged_in = True
                 st.session_state.pending_username = username
+                st.session_state.pending_password = ""
                 st.session_state.setup_done = False
                 st.success("Login realizado com sucesso!")
                 st.rerun()
             elif result.get("needs_2fa"):
                 st.session_state.login_step = "2fa"
-                st.session_state.pending_loader = result.get("_loader")
                 st.session_state.pending_username = username
+                st.session_state.pending_password = password
                 st.info("Código de autenticação de dois fatores necessário.")
                 st.rerun()
             else:
@@ -151,15 +152,15 @@ def _show_2fa_form():
         if submitted and code:
             with st.spinner("Verificando código..."):
                 result = auth.login_2fa(
-                    st.session_state.pending_loader,
                     st.session_state.pending_username,
+                    st.session_state.pending_password,
                     code.strip(),
                 )
 
             if result["success"]:
                 st.session_state.logged_in = True
                 st.session_state.login_step = "credentials"
-                st.session_state.pending_loader = None
+                st.session_state.pending_password = ""
                 st.session_state.setup_done = False
                 st.success("Login realizado com sucesso!")
                 st.rerun()
@@ -168,7 +169,7 @@ def _show_2fa_form():
 
         if back:
             st.session_state.login_step = "credentials"
-            st.session_state.pending_loader = None
+            st.session_state.pending_password = ""
             st.rerun()
 
 
@@ -207,15 +208,30 @@ def show_setup():
     database.add_account(session_user)
 
     if f"scrape_done_{session_user}" not in st.session_state:
-        with st.spinner(f"Coletando posts de @{session_user}..."):
-            result = scraper.scrape_account(session_user, max_posts=20)
+        status_placeholder = st.empty()
+        status_placeholder.info(f"Coletando posts de @{session_user}... (limite: 2 min)")
+
+        result = scraper.scrape_account(session_user, max_posts=20)
+
+        status_placeholder.empty()
 
         if result["success"]:
             st.success(f"{result['posts_scraped']} posts coletados do seu perfil!")
+            if result.get("error"):
+                st.warning(f"Aviso: {result['error']}")
             st.session_state[f"scrape_done_{session_user}"] = True
         else:
-            st.warning(f"Coleta parcial: {result['error']}")
-            st.session_state[f"scrape_done_{session_user}"] = True
+            st.error(f"Erro na coleta: {result['error']}")
+            st.warning("Você pode tentar novamente ou ir direto ao dashboard.")
+            col_retry, col_skip = st.columns(2)
+            with col_retry:
+                if st.button("Tentar novamente", key="retry_scrape_self", use_container_width=True, type="primary"):
+                    st.rerun()
+            with col_skip:
+                if st.button("Pular e continuar", key="skip_scrape_self", use_container_width=True):
+                    st.session_state[f"scrape_done_{session_user}"] = True
+                    st.rerun()
+            return  # Stop here until user decides
     else:
         st.success("Perfil analisado!")
 
@@ -233,7 +249,10 @@ def show_setup():
             )
             st.session_state.niche_analysis = {"niche": "", "niche_description": "", "creators": []}
         else:
-            with st.spinner("Analisando seu conteúdo com IA para identificar seu nicho..."):
+            ai_status = st.empty()
+            ai_status.info("Analisando seu conteúdo com IA para identificar seu nicho...")
+
+            try:
                 # Get user's data for AI analysis
                 posts = database.get_posts(account_username=session_user, limit=20)
                 captions = [p.get("caption", "") for p in posts if p.get("caption")]
@@ -258,7 +277,12 @@ def show_setup():
                     hashtags=list(set(all_hashtags)),
                     num_suggestions=5,
                 )
+                ai_status.empty()
                 st.session_state.niche_analysis = analysis
+            except Exception as e:
+                ai_status.empty()
+                st.error(f"Erro na análise com IA: {e}")
+                st.session_state.niche_analysis = {"niche": "", "niche_description": "", "creators": []}
 
     analysis = st.session_state.niche_analysis
 
@@ -339,21 +363,49 @@ def show_setup():
 
     if added_count > 0:
         st.subheader(f"3. Coletar dados ({added_count} perfis no radar)")
+        st.caption("Cada perfil tem limite de 2 minutos para coleta.")
 
-        if st.button("🔄 Coletar Todos e Ir ao Dashboard", use_container_width=True, type="primary"):
+        if st.button("Coletar Todos e Ir ao Dashboard", use_container_width=True, type="primary"):
+            import time as _time
+
             progress = st.progress(0, text="Iniciando coleta...")
+            status_text = st.empty()
             results = []
             non_self = [a for a in accounts if a["username"] != session_user]
+            total_start = _time.time()
+            max_total_time = 300  # 5 min total max
+
             for i, account in enumerate(non_self):
-                progress.progress(
-                    i / len(non_self),
-                    text=f"Coletando @{account['username']}... ({i+1}/{len(non_self)})",
-                )
+                # Check total time limit
+                if _time.time() - total_start > max_total_time:
+                    status_text.warning(
+                        f"Tempo total excedido (5 min). Coletados {i}/{len(non_self)} perfis. "
+                        "Os demais podem ser coletados na página Contas."
+                    )
+                    break
+
+                pct = i / len(non_self)
+                progress.progress(pct, text=f"Coletando @{account['username']}... ({i+1}/{len(non_self)})")
+                status_text.info(f"Coletando @{account['username']}... (limite: 2 min por perfil)")
+
                 result = scraper.scrape_account(account["username"], max_posts=15)
                 result["username"] = account["username"]
                 results.append(result)
 
+                # If session expired, stop and ask to re-login
+                if not result["success"] and result.get("error", ""):
+                    err = result["error"].lower()
+                    if "sessão expirada" in err or "login" in err:
+                        progress.progress(1.0, text="Coleta interrompida")
+                        status_text.empty()
+                        st.error(
+                            "Sessão do Instagram expirada. Faça logout e login novamente."
+                        )
+                        st.session_state.setup_done = True
+                        st.rerun()
+
             progress.progress(1.0, text="Coleta finalizada!")
+            status_text.empty()
 
             success_count = sum(1 for r in results if r["success"])
             total_posts = sum(r["posts_scraped"] for r in results)
@@ -362,6 +414,8 @@ def show_setup():
             for r in results:
                 if not r["success"]:
                     st.warning(f"@{r['username']}: {r['error']}")
+                elif r.get("error"):
+                    st.info(f"@{r['username']}: {r['error']}")
 
             st.session_state.setup_done = True
             st.rerun()
