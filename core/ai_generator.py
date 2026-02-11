@@ -3,7 +3,7 @@ import json
 import anthropic
 
 import config
-from core import analyzer
+from core import analyzer, database
 
 
 SYSTEM_PROMPT = """Você é um estrategista de conteúdo para Instagram, especialista em engajamento e tendências digitais.
@@ -94,3 +94,102 @@ def generate_content_ideas(
             }]
 
     return ideas
+
+
+def _parse_json_response(response_text: str) -> list:
+    """Parse a JSON array from an AI response, handling markdown fences."""
+    try:
+        return json.loads(response_text)
+    except json.JSONDecodeError:
+        start = response_text.find("[")
+        end = response_text.rfind("]") + 1
+        if start >= 0 and end > start:
+            return json.loads(response_text[start:end])
+        return []
+
+
+def analyze_niche_and_suggest_creators(
+    username: str,
+    bio: str = "",
+    captions: list[str] = None,
+    hashtags: list[str] = None,
+    num_suggestions: int = 5,
+) -> dict:
+    """Analyze a user's content niche and suggest top creators to follow.
+
+    Uses AI to understand the user's niche from their bio, captions, and hashtags,
+    then suggests the biggest creators in that same niche for inspiration.
+
+    Returns: {niche, niche_description, creators: [{username, reason, followers_estimate}]}
+    """
+    if not config.ANTHROPIC_API_KEY:
+        return {"niche": "", "niche_description": "", "creators": []}
+
+    # Build context
+    captions_text = ""
+    if captions:
+        captions_text = "\n".join(f"- {c[:200]}" for c in captions[:10])
+
+    hashtags_text = ""
+    if hashtags:
+        hashtags_text = ", ".join(f"#{h}" for h in hashtags[:30])
+
+    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+
+    message = client.messages.create(
+        model=config.CLAUDE_MODEL,
+        max_tokens=2000,
+        system=(
+            "Você é um especialista em Instagram e marketing digital no Brasil. "
+            "Analise o perfil de um usuário e sugira os MAIORES creators/influenciadores "
+            "do Instagram que produzem conteúdo similar ou no mesmo nicho. "
+            "Foque em creators grandes e conhecidos (100K+ seguidores) que seriam boas "
+            "referências de inspiração. Considere creators brasileiros E internacionais.\n\n"
+            "IMPORTANTE: Retorne APENAS um JSON válido, sem markdown ou texto adicional."
+        ),
+        messages=[{
+            "role": "user",
+            "content": f"""Analise este perfil do Instagram e sugira {num_suggestions} grandes creators similares:
+
+**Username:** @{username}
+**Bio:** {bio or 'Não disponível'}
+
+**Últimas captions (resumo do conteúdo):**
+{captions_text or 'Não disponível'}
+
+**Hashtags mais usadas:**
+{hashtags_text or 'Não disponível'}
+
+Retorne um JSON com este formato exato:
+{{
+  "niche": "nome curto do nicho (ex: fitness, empreendedorismo, humor)",
+  "niche_description": "descrição de 1 frase do tipo de conteúdo",
+  "creators": [
+    {{
+      "username": "username_real_do_instagram (sem @)",
+      "name": "nome do creator",
+      "reason": "por que é relevante como inspiração (1 frase)",
+      "followers_estimate": "estimativa de seguidores (ex: 5M, 800K)"
+    }}
+  ]
+}}"""
+        }],
+    )
+
+    response_text = message.content[0].text
+
+    try:
+        result = json.loads(response_text)
+    except json.JSONDecodeError:
+        # Try to extract JSON object
+        start = response_text.find("{")
+        end = response_text.rfind("}") + 1
+        if start >= 0 and end > start:
+            try:
+                result = json.loads(response_text[start:end])
+            except json.JSONDecodeError:
+                result = {"niche": "", "niche_description": "", "creators": []}
+        else:
+            result = {"niche": "", "niche_description": "", "creators": []}
+
+    return result

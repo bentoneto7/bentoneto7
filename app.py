@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import streamlit as st
 import plotly.express as px
 
-from core import database, analyzer, auth, scraper
+from core import database, analyzer, auth, scraper, ai_generator
 
 # Initialize database
 database.init_db()
@@ -32,6 +32,8 @@ if "pending_username" not in st.session_state:
     st.session_state.pending_username = ""
 if "suggested_profiles" not in st.session_state:
     st.session_state.suggested_profiles = []
+if "niche_analysis" not in st.session_state:
+    st.session_state.niche_analysis = None
 if "setup_done" not in st.session_state:
     st.session_state.setup_done = False
 
@@ -171,10 +173,10 @@ def _show_2fa_form():
 
 
 # ═══════════════════════════════════════════
-# SETUP: POST-LOGIN (scrape + suggestions)
+# SETUP: POST-LOGIN (scrape + AI analysis + suggestions)
 # ═══════════════════════════════════════════
 def show_setup():
-    """First-time setup after login: scrape user's profile and suggest similar accounts."""
+    """First-time setup: scrape user profile, AI niche analysis, suggest top creators."""
     session_user = auth.get_session_username()
 
     # Sidebar
@@ -184,6 +186,8 @@ def show_setup():
             auth.logout()
             st.session_state.logged_in = False
             st.session_state.setup_done = False
+            st.session_state.niche_analysis = None
+            st.session_state.suggested_profiles = []
             st.rerun()
         st.divider()
 
@@ -191,114 +195,152 @@ def show_setup():
         """
         <div style="text-align: center; padding: 1rem 0;">
             <h1 style="font-size: 2.5rem;">📡 Configurando seu Radar</h1>
+            <p style="color: #888;">Vamos analisar seu conteúdo e encontrar as melhores inspirações</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    # Step 1: Scrape the user's own profile
+    # ── Step 1: Scrape the user's own profile ──
     st.subheader(f"1. Analisando seu perfil @{session_user}")
 
-    # Auto-add user's own account if not already added
     database.add_account(session_user)
 
     if f"scrape_done_{session_user}" not in st.session_state:
         with st.spinner(f"Coletando posts de @{session_user}..."):
-            result = scraper.scrape_account(session_user, max_posts=15)
+            result = scraper.scrape_account(session_user, max_posts=20)
 
         if result["success"]:
             st.success(f"{result['posts_scraped']} posts coletados do seu perfil!")
             st.session_state[f"scrape_done_{session_user}"] = True
         else:
-            st.warning(f"Não foi possível coletar posts: {result['error']}")
+            st.warning(f"Coleta parcial: {result['error']}")
             st.session_state[f"scrape_done_{session_user}"] = True
     else:
-        st.success("Perfil já analisado!")
+        st.success("Perfil analisado!")
 
     st.divider()
 
-    # Step 2: Suggest similar profiles
-    st.subheader("2. Perfis sugeridos para seu Radar")
-    st.caption("Baseado nas contas que você segue, selecionamos perfis relevantes para monitorar")
+    # ── Step 2: AI Niche Analysis + Creator Suggestions ──
+    st.subheader("2. Identificando seu nicho e maiores creators similares")
 
-    # Load suggestions if not done yet
-    if not st.session_state.suggested_profiles:
-        with st.spinner("Buscando perfis similares..."):
-            suggestions = scraper.get_similar_profiles(session_user, limit=5)
-            st.session_state.suggested_profiles = suggestions
+    if st.session_state.niche_analysis is None:
+        import config as _config
+        if not _config.ANTHROPIC_API_KEY:
+            st.warning(
+                "**ANTHROPIC_API_KEY** não configurada. "
+                "Configure nas variáveis de ambiente do Railway para ativar a análise com IA."
+            )
+            st.session_state.niche_analysis = {"niche": "", "niche_description": "", "creators": []}
+        else:
+            with st.spinner("Analisando seu conteúdo com IA para identificar seu nicho..."):
+                # Get user's data for AI analysis
+                posts = database.get_posts(account_username=session_user, limit=20)
+                captions = [p.get("caption", "") for p in posts if p.get("caption")]
+                all_hashtags = []
+                for p in posts:
+                    tags = p.get("hashtags", [])
+                    if isinstance(tags, list):
+                        all_hashtags.extend(tags)
 
-    suggestions = st.session_state.suggested_profiles
+                # Get bio from account info
+                accounts = database.get_accounts()
+                bio = ""
+                for a in accounts:
+                    if a["username"] == session_user:
+                        bio = a.get("bio") or ""
+                        break
 
-    if suggestions:
-        # Show each suggestion with add button
-        selected = []
-        for i, profile in enumerate(suggestions):
+                analysis = ai_generator.analyze_niche_and_suggest_creators(
+                    username=session_user,
+                    bio=bio,
+                    captions=captions,
+                    hashtags=list(set(all_hashtags)),
+                    num_suggestions=5,
+                )
+                st.session_state.niche_analysis = analysis
+
+    analysis = st.session_state.niche_analysis
+
+    # Show niche info
+    if analysis.get("niche"):
+        st.markdown(
+            f"**Seu nicho:** {analysis['niche'].upper()}"
+        )
+        if analysis.get("niche_description"):
+            st.caption(analysis["niche_description"])
+        st.divider()
+
+    # Show creator suggestions
+    creators = analysis.get("creators", [])
+
+    if creators:
+        st.markdown("**Maiores creators do seu nicho para inspiração:**")
+        st.caption("Esses perfis produzem conteúdo similar ao seu e podem servir como referência")
+
+        for i, creator in enumerate(creators):
             with st.container():
-                col_info, col_stats, col_action = st.columns([3, 1, 1])
+                col_info, col_reason, col_action = st.columns([2, 2, 1])
 
                 with col_info:
-                    st.markdown(f"**@{profile['username']}**")
-                    if profile.get("full_name"):
-                        st.caption(profile["full_name"])
-                    if profile.get("bio"):
-                        st.caption(profile["bio"][:100])
+                    username = creator.get("username", "").strip().lstrip("@")
+                    name = creator.get("name", "")
+                    followers_est = creator.get("followers_estimate", "")
 
-                with col_stats:
-                    followers = profile.get("followers", 0)
-                    if followers >= 1_000_000:
-                        display = f"{followers/1_000_000:.1f}M"
-                    elif followers >= 1_000:
-                        display = f"{followers/1_000:.1f}K"
-                    else:
-                        display = str(followers)
-                    st.metric("Seguidores", display)
+                    st.markdown(f"**@{username}**")
+                    if name:
+                        st.caption(f"{name} — {followers_est} seguidores" if followers_est else name)
+
+                with col_reason:
+                    reason = creator.get("reason", "")
+                    if reason:
+                        st.caption(reason)
 
                 with col_action:
-                    key = f"add_suggestion_{profile['username']}"
+                    key = f"add_creator_{username}"
                     already_added = any(
-                        a["username"] == profile["username"]
+                        a["username"] == username
                         for a in database.get_accounts()
                     )
                     if already_added:
-                        st.success("Adicionado")
+                        st.success("No radar")
                     elif st.button("➕ Adicionar", key=key, use_container_width=True):
-                        database.add_account(profile["username"])
+                        database.add_account(username)
                         st.rerun()
 
                 st.divider()
 
-        # Add all button
+        # Bulk actions
         col_all, col_skip = st.columns(2)
         with col_all:
             if st.button("➕ Adicionar Todos ao Radar", use_container_width=True, type="primary"):
-                for profile in suggestions:
-                    database.add_account(profile["username"])
-                st.success("Todos os perfis adicionados!")
-                st.session_state.setup_done = True
+                for creator in creators:
+                    username = creator.get("username", "").strip().lstrip("@")
+                    if username:
+                        database.add_account(username)
+                st.success("Todos adicionados!")
                 st.rerun()
 
         with col_skip:
-            if st.button("Pular e ir ao Dashboard", use_container_width=True):
+            if st.button("Pular sugestões", use_container_width=True):
                 st.session_state.setup_done = True
                 st.rerun()
     else:
         st.info(
-            "Não foi possível buscar sugestões automaticamente. "
+            "Não foi possível gerar sugestões. "
             "Você pode adicionar perfis manualmente na página **Contas**."
         )
-        if st.button("Ir ao Dashboard", use_container_width=True, type="primary"):
-            st.session_state.setup_done = True
-            st.rerun()
 
     st.divider()
 
-    # Step 3: Scrape all added accounts
+    # ── Step 3: Scrape all added accounts ──
     accounts = database.get_accounts()
     added_count = len([a for a in accounts if a["username"] != session_user])
 
     if added_count > 0:
-        st.subheader("3. Coletar dados dos perfis adicionados")
-        if st.button("🔄 Coletar Todos Agora", use_container_width=True, type="primary"):
+        st.subheader(f"3. Coletar dados ({added_count} perfis no radar)")
+
+        if st.button("🔄 Coletar Todos e Ir ao Dashboard", use_container_width=True, type="primary"):
             progress = st.progress(0, text="Iniciando coleta...")
             results = []
             non_self = [a for a in accounts if a["username"] != session_user]
@@ -324,6 +366,11 @@ def show_setup():
             st.session_state.setup_done = True
             st.rerun()
 
+    # Always show option to go to dashboard
+    if st.button("Ir direto ao Dashboard", use_container_width=True):
+        st.session_state.setup_done = True
+        st.rerun()
+
 
 # ═══════════════════════════════════════════
 # DASHBOARD
@@ -339,6 +386,7 @@ def show_dashboard():
                 st.session_state.logged_in = False
                 st.session_state.setup_done = False
                 st.session_state.suggested_profiles = []
+                st.session_state.niche_analysis = None
                 st.rerun()
             st.divider()
 
