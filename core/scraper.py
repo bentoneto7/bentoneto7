@@ -1,3 +1,4 @@
+import logging
 import time
 from itertools import islice
 from datetime import datetime
@@ -7,6 +8,8 @@ from requests.adapters import HTTPAdapter
 
 import config
 from core import database, auth
+
+log = logging.getLogger(__name__)
 
 
 class _TimeoutAdapter(HTTPAdapter):
@@ -31,24 +34,26 @@ def _get_loader() -> instaloader.Instaloader:
         compress_json=False,
     )
 
-    # Enforce 30s timeout on all HTTP requests to prevent infinite hangs
-    adapter = _TimeoutAdapter(timeout=30)
-    L.context._session.mount("http://", adapter)
-    L.context._session.mount("https://", adapter)
-
-    # Configure proxy if set (needed for cloud/datacenter IPs)
+    # Configure proxy FIRST (before mounting adapters)
     if config.PROXY_URL:
         L.context._session.proxies = {
             "http": config.PROXY_URL,
             "https": config.PROXY_URL,
         }
+        log.info("Scraper proxy configurado: %s", config.PROXY_URL[:30] + "...")
+
+    # Enforce 30s timeout on all HTTP requests to prevent infinite hangs
+    adapter = _TimeoutAdapter(timeout=30)
+    L.context._session.mount("http://", adapter)
+    L.context._session.mount("https://", adapter)
 
     # Load session from file (created by auth.login or auth.restore_session_from_env)
     if config.INSTAGRAM_USERNAME:
         try:
             L.load_session_from_file(config.INSTAGRAM_USERNAME)
+            log.info("Session loaded for @%s", config.INSTAGRAM_USERNAME)
         except FileNotFoundError:
-            pass
+            log.warning("Session file not found for @%s", config.INSTAGRAM_USERNAME)
 
     return L
 
@@ -71,19 +76,23 @@ def scrape_account(username: str, max_posts: int = None) -> dict:
         max_posts = config.DEFAULT_SCRAPE_LIMIT
 
     if not auth.is_logged_in():
+        log.warning("scrape_account(@%s): not logged in", username)
         return {
             "success": False, "posts_scraped": 0,
             "error": "Faça login no Instagram primeiro (página principal)."
         }
 
+    log.info("scrape_account(@%s): starting (max_posts=%d)", username, max_posts)
     L = _get_loader()
 
     try:
         profile = instaloader.Profile.from_username(L.context, username)
     except instaloader.exceptions.ProfileNotExistsException:
+        log.warning("scrape_account(@%s): profile not found", username)
         return {"success": False, "posts_scraped": 0, "error": f"Perfil @{username} não existe"}
     except instaloader.exceptions.ConnectionException as e:
         error_str = str(e).lower()
+        log.error("scrape_account(@%s): ConnectionException: %s", username, e)
         if "429" in error_str or "too many" in error_str:
             msg = (
                 "Instagram bloqueou temporariamente (rate limit). "
@@ -172,10 +181,13 @@ def scrape_account(username: str, max_posts: int = None) -> dict:
 
     if posts_scraped > 0:
         error_msg = "; ".join(errors) if errors else None
+        log.info("scrape_account(@%s): OK — %d posts scraped", username, posts_scraped)
         return {"success": True, "posts_scraped": posts_scraped, "error": error_msg}
     elif errors:
+        log.warning("scrape_account(@%s): FAILED — %s", username, "; ".join(errors))
         return {"success": False, "posts_scraped": 0, "error": "; ".join(errors)}
     else:
+        log.info("scrape_account(@%s): no posts found", username)
         return {"success": True, "posts_scraped": 0, "error": "Nenhum post encontrado."}
 
 

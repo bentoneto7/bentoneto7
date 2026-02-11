@@ -1,11 +1,19 @@
+import logging
 import sys
 import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    stream=sys.stdout,
+)
+
 import streamlit as st
 import plotly.express as px
 
+import config
 from core import database, analyzer, auth, scraper, ai_generator, loaders
 
 # Initialize database
@@ -461,7 +469,7 @@ def show_setup():
 # DASHBOARD
 # ═══════════════════════════════════════════
 def show_dashboard():
-    # Sidebar: session info + logout
+    # Sidebar: session info + logout + diagnostics
     with st.sidebar:
         session_user = auth.get_session_username()
         if session_user:
@@ -474,6 +482,33 @@ def show_dashboard():
                 st.session_state.niche_analysis = None
                 st.rerun()
             st.divider()
+
+        # Diagnostic expander in sidebar
+        with st.expander("Status do Sistema"):
+            # Proxy status
+            if config.PROXY_URL:
+                proxy_result = auth.test_proxy()
+                if proxy_result["ok"]:
+                    st.success(f"Proxy OK — IP: {proxy_result['ip']}")
+                else:
+                    st.error(f"Proxy FALHOU: {proxy_result['error']}")
+            else:
+                st.warning("PROXY_URL não configurada")
+
+            # Session status
+            if st.button("Testar Sessão", use_container_width=True, key="test_session"):
+                with st.spinner("Verificando sessão..."):
+                    session_result = auth.verify_session()
+                if session_result["valid"]:
+                    st.success(f"Sessão válida: @{session_result['username']}")
+                else:
+                    st.error(f"Sessão inválida: {session_result['error']}")
+
+            # API key status
+            if config.ANTHROPIC_API_KEY:
+                st.success("Anthropic API Key configurada")
+            else:
+                st.warning("ANTHROPIC_API_KEY não configurada")
 
     st.title("📡 Content Radar")
     st.caption("Sistema de radar de conteúdo para Instagram — análise de tendências e geração de ideias")

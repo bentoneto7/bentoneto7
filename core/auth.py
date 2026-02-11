@@ -38,6 +38,42 @@ def get_session_username() -> str:
     return config.INSTAGRAM_USERNAME or ""
 
 
+def verify_session() -> dict:
+    """Test if the current session is actually valid with Instagram.
+
+    Returns: {valid: bool, username: str, error: str}
+    """
+    if not is_logged_in():
+        return {"valid": False, "username": "", "error": "Nenhuma sessão encontrada"}
+
+    username = config.INSTAGRAM_USERNAME
+    L = _create_loader()
+
+    try:
+        L.load_session_from_file(username)
+        # Test with a simple profile lookup (the user's own profile)
+        profile = instaloader.Profile.from_username(L.context, username)
+        log.info("Session valid for @%s (followers: %d)", username, profile.followers)
+        return {"valid": True, "username": username, "error": None}
+    except FileNotFoundError:
+        log.warning("Session file missing for @%s", username)
+        return {"valid": False, "username": username, "error": "Arquivo de sessão não encontrado"}
+    except instaloader.exceptions.ConnectionException as e:
+        error_str = str(e).lower()
+        if "redirect" in error_str or "login" in error_str:
+            log.warning("Session expired for @%s", username)
+            return {"valid": False, "username": username, "error": "Sessão expirada — faça login novamente"}
+        if "checkpoint" in error_str or "challenge" in error_str:
+            return {"valid": False, "username": username, "error": "Instagram pediu verificação de segurança"}
+        if "429" in error_str:
+            # Rate limited but session might still be valid
+            return {"valid": True, "username": username, "error": "Rate limit (sessão pode estar OK)"}
+        return {"valid": False, "username": username, "error": f"Erro de conexão: {e}"}
+    except Exception as e:
+        log.warning("Session verification failed for @%s: %s", username, e)
+        return {"valid": False, "username": username, "error": str(e)}
+
+
 def test_proxy() -> dict:
     """Test if the configured proxy is working. Returns {ok, ip, error}."""
     if not config.PROXY_URL:
