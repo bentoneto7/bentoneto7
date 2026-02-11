@@ -36,8 +36,19 @@ def get_session_username() -> str:
 
 
 def _create_loader() -> instaloader.Instaloader:
-    """Create a fresh Instaloader instance."""
-    return instaloader.Instaloader(
+    """Create a fresh Instaloader instance with proxy + timeout support."""
+    from requests.adapters import HTTPAdapter
+
+    class _TimeoutAdapter(HTTPAdapter):
+        def __init__(self, timeout=30, **kwargs):
+            self.timeout = timeout
+            super().__init__(**kwargs)
+
+        def send(self, *args, **kwargs):
+            kwargs.setdefault("timeout", self.timeout)
+            return super().send(*args, **kwargs)
+
+    L = instaloader.Instaloader(
         download_pictures=False,
         download_videos=False,
         download_video_thumbnails=False,
@@ -46,6 +57,20 @@ def _create_loader() -> instaloader.Instaloader:
         save_metadata=False,
         compress_json=False,
     )
+
+    # Timeout to prevent infinite hangs
+    adapter = _TimeoutAdapter(timeout=30)
+    L.context._session.mount("http://", adapter)
+    L.context._session.mount("https://", adapter)
+
+    # Proxy support (critical for login from cloud/datacenter IPs)
+    if config.PROXY_URL:
+        L.context._session.proxies = {
+            "http": config.PROXY_URL,
+            "https": config.PROXY_URL,
+        }
+
+    return L
 
 
 def _checkpoint_message() -> str:
