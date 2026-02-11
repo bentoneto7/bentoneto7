@@ -11,8 +11,11 @@ from core import database, analyzer, auth, scraper, ai_generator, loaders
 # Initialize database
 database.init_db()
 
-# Restore session from env var if available (cloud deploys)
-auth.restore_session_from_env()
+# Restore session: try DB first (remember login), then env var (cloud deploys)
+if not auth.is_logged_in():
+    auth.restore_session_from_db()
+if not auth.is_logged_in():
+    auth.restore_session_from_env()
 
 st.set_page_config(
     page_title="Content Radar",
@@ -30,6 +33,8 @@ if "pending_username" not in st.session_state:
     st.session_state.pending_username = ""
 if "pending_password" not in st.session_state:
     st.session_state.pending_password = ""
+if "pending_remember" not in st.session_state:
+    st.session_state.pending_remember = True
 if "suggested_profiles" not in st.session_state:
     st.session_state.suggested_profiles = []
 if "niche_analysis" not in st.session_state:
@@ -87,6 +92,11 @@ def _show_credentials_form():
             type="password",
             placeholder="Sua senha",
         )
+        remember = st.checkbox(
+            "Lembrar meu login",
+            value=True,
+            help="Manter sessão ativa por 30 dias. Sem isso, expira em 24h.",
+        )
 
         submitted = st.form_submit_button(
             "Entrar",
@@ -104,7 +114,7 @@ def _show_credentials_form():
             login_loader = st.empty()
             with login_loader.container():
                 loaders.radar_loader("login")
-            result = auth.login(username, password)
+            result = auth.login(username, password, remember=remember)
             login_loader.empty()
 
             if result["success"]:
@@ -118,6 +128,7 @@ def _show_credentials_form():
                 st.session_state.login_step = "2fa"
                 st.session_state.pending_username = username
                 st.session_state.pending_password = password
+                st.session_state.pending_remember = remember
                 st.info("Código de autenticação de dois fatores necessário.")
                 st.rerun()
             else:
@@ -160,6 +171,7 @@ def _show_2fa_form():
                 st.session_state.pending_username,
                 st.session_state.pending_password,
                 code.strip(),
+                remember=st.session_state.pending_remember,
             )
             tfa_loader.empty()
 

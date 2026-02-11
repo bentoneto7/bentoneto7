@@ -48,7 +48,7 @@ def _create_loader() -> instaloader.Instaloader:
     )
 
 
-def login(username: str, password: str) -> dict:
+def login(username: str, password: str, remember: bool = False) -> dict:
     """Login to Instagram with username and password.
 
     Returns: {success: bool, needs_2fa: bool, error: str}
@@ -62,6 +62,9 @@ def login(username: str, password: str) -> dict:
 
         # Also save as base64 in env for persistence
         _save_session_to_env(username)
+
+        # Persist session to database
+        _persist_session_to_db(username, remember)
 
         # Update config in memory
         config.INSTAGRAM_USERNAME = username
@@ -88,7 +91,7 @@ def login(username: str, password: str) -> dict:
         return {"success": False, "needs_2fa": False, "error": f"Erro: {e}"}
 
 
-def login_2fa(username: str, password: str, code: str) -> dict:
+def login_2fa(username: str, password: str, code: str, remember: bool = False) -> dict:
     """Complete login + 2FA in a single call (no need to store loader object).
 
     Re-creates the login flow and immediately provides the 2FA code.
@@ -102,6 +105,7 @@ def login_2fa(username: str, password: str, code: str) -> dict:
         os.makedirs(SESSION_DIR, exist_ok=True)
         L.save_session_to_file(filename=_get_session_path(username))
         _save_session_to_env(username)
+        _persist_session_to_db(username, remember)
         config.INSTAGRAM_USERNAME = username
         return {"success": True, "error": None}
 
@@ -111,6 +115,7 @@ def login_2fa(username: str, password: str, code: str) -> dict:
             os.makedirs(SESSION_DIR, exist_ok=True)
             L.save_session_to_file(filename=_get_session_path(username))
             _save_session_to_env(username)
+            _persist_session_to_db(username, remember)
             config.INSTAGRAM_USERNAME = username
             return {"success": True, "error": None}
 
@@ -137,12 +142,15 @@ def login_2fa(username: str, password: str, code: str) -> dict:
 
 
 def logout():
-    """Remove the current session."""
+    """Remove the current session (file, memory, and database)."""
+    from core import database
+
     username = config.INSTAGRAM_USERNAME
     if username:
         session_path = _get_session_path(username)
         if os.path.exists(session_path):
             os.remove(session_path)
+        database.clear_user_session(username)
 
     config.INSTAGRAM_USERNAME = ""
     config.INSTAGRAM_SESSION_B64 = ""
@@ -165,6 +173,49 @@ def restore_session_from_env() -> bool:
         return True
     except Exception:
         return False
+
+
+def restore_session_from_db() -> bool:
+    """Try to restore a saved session from the database.
+
+    This is the primary "remember login" mechanism.
+    Returns True if a valid session was restored.
+    """
+    from core import database
+
+    database.cleanup_expired_sessions()
+
+    saved = database.get_saved_session()
+    if not saved:
+        return False
+
+    username = saved["username"]
+    session_b64 = saved["session_b64"]
+
+    try:
+        session_bytes = base64.b64decode(session_b64)
+        os.makedirs(SESSION_DIR, exist_ok=True)
+        session_path = _get_session_path(username)
+        with open(session_path, "wb") as f:
+            f.write(session_bytes)
+
+        config.INSTAGRAM_USERNAME = username
+        config.INSTAGRAM_SESSION_B64 = session_b64
+        return True
+    except Exception:
+        database.clear_user_session(username)
+        return False
+
+
+def _persist_session_to_db(username: str, remember: bool = False):
+    """Save the current session to the database for persistence."""
+    from core import database
+
+    session_path = _get_session_path(username)
+    if os.path.exists(session_path):
+        with open(session_path, "rb") as f:
+            session_b64 = base64.b64encode(f.read()).decode()
+        database.save_user_session(username, session_b64, remember=remember)
 
 
 def _save_session_to_env(username: str):

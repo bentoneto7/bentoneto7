@@ -65,6 +65,15 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS user_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                session_b64 TEXT NOT NULL,
+                remember INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP
+            );
+
             CREATE INDEX IF NOT EXISTS idx_posts_account ON posts(account_username);
             CREATE INDEX IF NOT EXISTS idx_posts_posted_at ON posts(posted_at);
             CREATE INDEX IF NOT EXISTS idx_posts_engagement ON posts(engagement_rate);
@@ -219,3 +228,60 @@ def toggle_idea_saved(idea_id: int):
             "UPDATE generated_ideas SET is_saved = NOT is_saved WHERE id = ?",
             (idea_id,)
         )
+
+
+# --- User Sessions (remember login) ---
+
+def save_user_session(username: str, session_b64: str, remember: bool = False):
+    """Save an Instagram session to the database for persistence."""
+    from datetime import timedelta
+
+    if remember:
+        expires = datetime.now() + timedelta(days=30)
+    else:
+        expires = datetime.now() + timedelta(hours=24)
+
+    with get_connection() as conn:
+        conn.execute("""
+            INSERT INTO user_sessions (username, session_b64, remember, created_at, expires_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(username) DO UPDATE SET
+                session_b64 = excluded.session_b64,
+                remember = excluded.remember,
+                created_at = excluded.created_at,
+                expires_at = excluded.expires_at
+        """, (username, session_b64, int(remember), datetime.now().isoformat(), expires.isoformat()))
+
+
+def get_saved_session() -> dict | None:
+    """Get the most recent valid (non-expired) saved session.
+
+    Returns: {username, session_b64, remember} or None.
+    """
+    with get_connection() as conn:
+        row = conn.execute("""
+            SELECT username, session_b64, remember
+            FROM user_sessions
+            WHERE expires_at > datetime('now')
+            ORDER BY created_at DESC
+            LIMIT 1
+        """).fetchone()
+
+        if row:
+            return dict(row)
+    return None
+
+
+def clear_user_session(username: str = None):
+    """Remove saved session(s) from the database."""
+    with get_connection() as conn:
+        if username:
+            conn.execute("DELETE FROM user_sessions WHERE username = ?", (username,))
+        else:
+            conn.execute("DELETE FROM user_sessions")
+
+
+def cleanup_expired_sessions():
+    """Remove expired sessions."""
+    with get_connection() as conn:
+        conn.execute("DELETE FROM user_sessions WHERE expires_at <= datetime('now')")
