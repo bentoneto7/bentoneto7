@@ -16,6 +16,18 @@ st.caption("Gerencie os perfis do Instagram que você quer monitorar")
 
 st.divider()
 
+# Cloud environment warning
+import config
+if not config.INSTAGRAM_USERNAME:
+    st.warning(
+        "**Ambiente Cloud detectado sem credenciais.** O Instagram pode bloquear "
+        "requisições de IPs de servidores. Para melhor resultado, configure nas "
+        "variáveis de ambiente do Railway:\n"
+        "- `INSTAGRAM_USERNAME` — seu usuário do Instagram\n"
+        "- `INSTAGRAM_PASSWORD` — sua senha\n"
+        "- `PROXY_URL` (opcional) — proxy residencial para evitar bloqueios"
+    )
+
 # Add account form
 with st.form("add_account", clear_on_submit=True):
     col1, col2 = st.columns([3, 1])

@@ -19,6 +19,13 @@ def _get_loader() -> instaloader.Instaloader:
         compress_json=False,
     )
 
+    # Configure proxy if set (needed for cloud/datacenter IPs)
+    if config.PROXY_URL:
+        L.context._session.proxies = {
+            "http": config.PROXY_URL,
+            "https": config.PROXY_URL,
+        }
+
     if config.INSTAGRAM_USERNAME:
         try:
             L.load_session_from_file(config.INSTAGRAM_USERNAME)
@@ -53,7 +60,29 @@ def scrape_account(username: str, max_posts: int = None) -> dict:
     except instaloader.exceptions.ProfileNotExistsException:
         return {"success": False, "posts_scraped": 0, "error": f"Perfil @{username} não existe"}
     except instaloader.exceptions.ConnectionException as e:
-        return {"success": False, "posts_scraped": 0, "error": f"Erro de conexão: {e}"}
+        error_str = str(e).lower()
+        if "429" in error_str or "too many" in error_str:
+            msg = (
+                "Instagram bloqueou temporariamente (rate limit). "
+                "Isso é comum em servidores cloud. "
+                "Dica: adicione INSTAGRAM_USERNAME e INSTAGRAM_PASSWORD nas variáveis "
+                "de ambiente, ou configure PROXY_URL com um proxy residencial."
+            )
+        elif "redirect" in error_str or "login" in error_str:
+            msg = (
+                "Instagram redirecionou para login — o IP do servidor pode estar bloqueado. "
+                "Configure INSTAGRAM_USERNAME e INSTAGRAM_PASSWORD nas variáveis "
+                "de ambiente do Railway."
+            )
+        else:
+            msg = (
+                f"Erro de conexão com Instagram: {e}. "
+                "Se estiver em servidor cloud, configure PROXY_URL ou credenciais do Instagram "
+                "nas variáveis de ambiente."
+            )
+        return {"success": False, "posts_scraped": 0, "error": msg}
+    except Exception as e:
+        return {"success": False, "posts_scraped": 0, "error": f"Erro inesperado: {e}"}
 
     if profile.is_private and not profile.followed_by_viewer:
         database.update_account_info(
@@ -97,7 +126,10 @@ def scrape_account(username: str, max_posts: int = None) -> dict:
 
             database.upsert_post(post_data)
             posts_scraped += 1
-        except Exception as e:
+        except instaloader.exceptions.ConnectionException:
+            # Rate limited mid-scrape, return what we got so far
+            break
+        except Exception:
             continue
 
     return {"success": True, "posts_scraped": posts_scraped, "error": None}
