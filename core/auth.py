@@ -48,6 +48,28 @@ def _create_loader() -> instaloader.Instaloader:
     )
 
 
+def _checkpoint_message() -> str:
+    return (
+        "O Instagram bloqueou o login por segurança (Checkpoint).\n\n"
+        "Isso acontece porque o servidor usa um IP de datacenter.\n\n"
+        "**Como resolver:**\n"
+        "1. Abra o Instagram no celular\n"
+        "2. Confirme o alerta de 'atividade suspeita' (se aparecer)\n"
+        "3. Volte aqui e tente logar novamente\n\n"
+        "Se continuar falhando, configure um **PROXY_URL** residencial "
+        "nas variáveis de ambiente do Railway."
+    )
+
+
+def _classify_connection_error(e: Exception) -> str:
+    error_str = str(e).lower()
+    if "checkpoint" in error_str or "challenge" in error_str:
+        return _checkpoint_message()
+    if "429" in error_str or "too many" in error_str:
+        return "Instagram bloqueou temporariamente (rate limit). Aguarde alguns minutos."
+    return f"Erro de conexão: {e}"
+
+
 def login(username: str, password: str, remember: bool = False) -> dict:
     """Login to Instagram with username and password.
 
@@ -78,16 +100,12 @@ def login(username: str, password: str, remember: bool = False) -> dict:
         return {"success": False, "needs_2fa": False, "error": "Usuário ou senha incorretos."}
 
     except instaloader.exceptions.ConnectionException as e:
-        error_str = str(e).lower()
-        if "checkpoint" in error_str or "challenge" in error_str:
-            return {
-                "success": False, "needs_2fa": False,
-                "error": "Instagram pediu verificação de segurança. Abra o Instagram no celular, "
-                         "confirme que é você, e tente novamente."
-            }
-        return {"success": False, "needs_2fa": False, "error": f"Erro de conexão: {e}"}
+        return {"success": False, "needs_2fa": False, "error": _classify_connection_error(e)}
 
     except Exception as e:
+        error_str = str(e).lower()
+        if "checkpoint" in error_str or "challenge" in error_str:
+            return {"success": False, "needs_2fa": False, "error": _checkpoint_message()}
         return {"success": False, "needs_2fa": False, "error": f"Erro: {e}"}
 
 
@@ -129,15 +147,12 @@ def login_2fa(username: str, password: str, code: str, remember: bool = False) -
         return {"success": False, "error": "Usuário ou senha incorretos."}
 
     except instaloader.exceptions.ConnectionException as e:
-        error_str = str(e).lower()
-        if "checkpoint" in error_str or "challenge" in error_str:
-            return {
-                "success": False,
-                "error": "Instagram pediu verificação de segurança. Abra o app e confirme.",
-            }
-        return {"success": False, "error": f"Erro de conexão: {e}"}
+        return {"success": False, "error": _classify_connection_error(e)}
 
     except Exception as e:
+        error_str = str(e).lower()
+        if "checkpoint" in error_str or "challenge" in error_str:
+            return {"success": False, "error": _checkpoint_message()}
         return {"success": False, "error": f"Erro: {e}"}
 
 
