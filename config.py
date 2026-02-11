@@ -15,6 +15,11 @@ INSTAGRAM_PASSWORD = os.getenv("INSTAGRAM_PASSWORD", "")
 # Format: "http://user:pass@host:port"
 PROXY_URL = os.getenv("PROXY_URL", "")
 
+# Instagram session cookie (base64-encoded session file for cloud deploys)
+# Generated locally with: instaloader --login YOUR_USER
+# Then encode: base64 ~/.config/instaloader/session-YOUR_USER
+INSTAGRAM_SESSION_B64 = os.getenv("INSTAGRAM_SESSION_B64", "")
+
 # Database
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "content_radar.db")
 

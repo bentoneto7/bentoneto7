@@ -18,15 +18,19 @@ st.divider()
 
 # Cloud environment warning
 import config
-if not config.INSTAGRAM_USERNAME:
+if not config.INSTAGRAM_SESSION_B64 and not config.INSTAGRAM_USERNAME:
     st.warning(
-        "**Ambiente Cloud detectado sem credenciais.** O Instagram pode bloquear "
-        "requisições de IPs de servidores. Para melhor resultado, configure nas "
-        "variáveis de ambiente do Railway:\n"
-        "- `INSTAGRAM_USERNAME` — seu usuário do Instagram\n"
-        "- `INSTAGRAM_PASSWORD` — sua senha\n"
-        "- `PROXY_URL` (opcional) — proxy residencial para evitar bloqueios"
+        "**Sessão do Instagram não configurada.** O Instagram bloqueia IPs de servidores cloud. "
+        "Para funcionar, configure `INSTAGRAM_SESSION_B64` nas variáveis de ambiente do Railway.\n\n"
+        "**Como gerar a sessão (no seu PC local):**\n"
+        "1. `pip install instaloader`\n"
+        "2. `instaloader --login SEU_USER` (digite senha + código 2FA)\n"
+        "3. `base64 ~/.config/instaloader/session-SEU_USER` (Linux/Mac)\n"
+        "4. Cole o resultado como variável `INSTAGRAM_SESSION_B64` no Railway\n"
+        "5. Também adicione `INSTAGRAM_USERNAME` com seu user"
     )
+elif config.INSTAGRAM_SESSION_B64:
+    st.success("Sessão do Instagram configurada via variável de ambiente.")
 
 # Add account form
 with st.form("add_account", clear_on_submit=True):

@@ -1,3 +1,6 @@
+import base64
+import os
+import tempfile
 import time
 from itertools import islice
 from datetime import datetime
@@ -6,6 +9,23 @@ import instaloader
 
 import config
 from core import database
+
+
+def _restore_session_from_env():
+    """Restore instaloader session file from INSTAGRAM_SESSION_B64 env var."""
+    if not config.INSTAGRAM_SESSION_B64 or not config.INSTAGRAM_USERNAME:
+        return None
+
+    try:
+        session_bytes = base64.b64decode(config.INSTAGRAM_SESSION_B64)
+        session_dir = os.path.expanduser("~/.config/instaloader")
+        os.makedirs(session_dir, exist_ok=True)
+        session_path = os.path.join(session_dir, f"session-{config.INSTAGRAM_USERNAME}")
+        with open(session_path, "wb") as f:
+            f.write(session_bytes)
+        return session_path
+    except Exception:
+        return None
 
 
 def _get_loader() -> instaloader.Instaloader:
@@ -26,7 +46,9 @@ def _get_loader() -> instaloader.Instaloader:
             "https": config.PROXY_URL,
         }
 
+    # Try to load session: first from env var (cloud), then from file (local)
     if config.INSTAGRAM_USERNAME:
+        _restore_session_from_env()
         try:
             L.load_session_from_file(config.INSTAGRAM_USERNAME)
         except FileNotFoundError:
@@ -65,20 +87,20 @@ def scrape_account(username: str, max_posts: int = None) -> dict:
             msg = (
                 "Instagram bloqueou temporariamente (rate limit). "
                 "Isso é comum em servidores cloud. "
-                "Dica: adicione INSTAGRAM_USERNAME e INSTAGRAM_PASSWORD nas variáveis "
-                "de ambiente, ou configure PROXY_URL com um proxy residencial."
+                "Configure INSTAGRAM_SESSION_B64 nas variáveis de ambiente "
+                "(veja instruções na página Contas)."
             )
         elif "redirect" in error_str or "login" in error_str:
             msg = (
-                "Instagram redirecionou para login — o IP do servidor pode estar bloqueado. "
-                "Configure INSTAGRAM_USERNAME e INSTAGRAM_PASSWORD nas variáveis "
-                "de ambiente do Railway."
+                "Instagram redirecionou para login — o IP do servidor está bloqueado. "
+                "Configure INSTAGRAM_SESSION_B64 nas variáveis de ambiente "
+                "(veja instruções na página Contas)."
             )
         else:
             msg = (
                 f"Erro de conexão com Instagram: {e}. "
-                "Se estiver em servidor cloud, configure PROXY_URL ou credenciais do Instagram "
-                "nas variáveis de ambiente."
+                "Configure INSTAGRAM_SESSION_B64 nas variáveis de ambiente "
+                "(veja instruções na página Contas)."
             )
         return {"success": False, "posts_scraped": 0, "error": msg}
     except Exception as e:
