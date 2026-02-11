@@ -305,6 +305,32 @@ def restore_session_from_env() -> bool:
         return False
 
 
+def auto_login_from_env() -> bool:
+    """Auto-login using INSTAGRAM_USERNAME + INSTAGRAM_PASSWORD env vars.
+
+    Used on first deploy when no saved session exists yet.
+    Returns True if login succeeded.
+    """
+    username = config.INSTAGRAM_USERNAME
+    password = config.INSTAGRAM_PASSWORD
+    if not username or not password:
+        return False
+
+    log.info("Attempting auto-login from env vars for @%s", username)
+    result = login(username, password, remember=True)
+
+    if result["success"]:
+        log.info("Auto-login successful for @%s", username)
+        return True
+
+    if result.get("needs_2fa"):
+        log.warning("Auto-login for @%s requires 2FA — manual login needed", username)
+    else:
+        log.warning("Auto-login failed for @%s: %s", username, result.get("error", ""))
+
+    return False
+
+
 def restore_session_from_db() -> bool:
     """Try to restore a saved session from the database.
 

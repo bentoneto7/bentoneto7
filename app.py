@@ -19,11 +19,13 @@ from core import database, analyzer, auth, scraper, ai_generator, loaders
 # Initialize database
 database.init_db()
 
-# Restore session: try DB first (remember login), then env var (cloud deploys)
+# Restore session: try DB first, then env session, then auto-login with credentials
 if not auth.is_logged_in():
     auth.restore_session_from_db()
 if not auth.is_logged_in():
     auth.restore_session_from_env()
+if not auth.is_logged_in():
+    auth.auto_login_from_env()
 
 st.set_page_config(
     page_title="Content Radar",
