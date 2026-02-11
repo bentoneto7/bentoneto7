@@ -106,7 +106,7 @@ def scrape_account(username: str, max_posts: int = None) -> dict:
 
     posts_scraped = 0
     errors = []
-    timeout_seconds = 120  # Max 2 minutes per account
+    timeout_seconds = 45  # Max 45 seconds per account
     start_time = time.time()
 
     for post in islice(profile.get_posts(), max_posts):

@@ -209,7 +209,7 @@ def show_setup():
 
     if f"scrape_done_{session_user}" not in st.session_state:
         status_placeholder = st.empty()
-        status_placeholder.info(f"Coletando posts de @{session_user}... (limite: 2 min)")
+        status_placeholder.info(f"Coletando posts de @{session_user}... (limite: 45s)")
 
         result = scraper.scrape_account(session_user, max_posts=20)
 
@@ -363,7 +363,7 @@ def show_setup():
 
     if added_count > 0:
         st.subheader(f"3. Coletar dados ({added_count} perfis no radar)")
-        st.caption("Cada perfil tem limite de 2 minutos para coleta.")
+        st.caption("Cada perfil tem limite de 45 segundos para coleta.")
 
         if st.button("Coletar Todos e Ir ao Dashboard", use_container_width=True, type="primary"):
             import time as _time
@@ -373,20 +373,20 @@ def show_setup():
             results = []
             non_self = [a for a in accounts if a["username"] != session_user]
             total_start = _time.time()
-            max_total_time = 300  # 5 min total max
+            max_total_time = 120  # 2 min total max
 
             for i, account in enumerate(non_self):
                 # Check total time limit
                 if _time.time() - total_start > max_total_time:
                     status_text.warning(
-                        f"Tempo total excedido (5 min). Coletados {i}/{len(non_self)} perfis. "
+                        f"Tempo total excedido (2 min). Coletados {i}/{len(non_self)} perfis. "
                         "Os demais podem ser coletados na página Contas."
                     )
                     break
 
                 pct = i / len(non_self)
                 progress.progress(pct, text=f"Coletando @{account['username']}... ({i+1}/{len(non_self)})")
-                status_text.info(f"Coletando @{account['username']}... (limite: 2 min por perfil)")
+                status_text.info(f"Coletando @{account['username']}... (limite: 45s por perfil)")
 
                 result = scraper.scrape_account(account["username"], max_posts=15)
                 result["username"] = account["username"]

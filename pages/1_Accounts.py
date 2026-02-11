@@ -66,12 +66,12 @@ if accounts:
             status_text = st.empty()
             results = []
             total_start = _time.time()
-            max_total_time = 300  # 5 min total max
+            max_total_time = 120  # 2 min total max
 
             for i, account in enumerate(accounts):
                 if _time.time() - total_start > max_total_time:
                     status_text.warning(
-                        f"Tempo total excedido (5 min). Coletados {i}/{len(accounts)} perfis."
+                        f"Tempo total excedido (2 min). Coletados {i}/{len(accounts)} perfis."
                     )
                     break
 
@@ -79,7 +79,7 @@ if accounts:
                     (i) / len(accounts),
                     text=f"Coletando @{account['username']}... ({i+1}/{len(accounts)})",
                 )
-                status_text.info(f"Coletando @{account['username']}... (limite: 2 min por perfil)")
+                status_text.info(f"Coletando @{account['username']}... (limite: 45s por perfil)")
 
                 result = scraper.scrape_account(account["username"])
                 result["username"] = account["username"]
@@ -149,7 +149,7 @@ if accounts:
             with c4:
                 if st.button("Coletar", key=f"scrape_{account['username']}"):
                     status = st.empty()
-                    status.info(f"Coletando @{account['username']}... (limite: 2 min)")
+                    status.info(f"Coletando @{account['username']}... (limite: 45s)")
                     result = scraper.scrape_account(account["username"])
                     status.empty()
                     if result["success"]:
