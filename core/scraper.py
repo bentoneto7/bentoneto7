@@ -1,6 +1,3 @@
-import base64
-import os
-import tempfile
 import time
 from itertools import islice
 from datetime import datetime
@@ -8,24 +5,7 @@ from datetime import datetime
 import instaloader
 
 import config
-from core import database
-
-
-def _restore_session_from_env():
-    """Restore instaloader session file from INSTAGRAM_SESSION_B64 env var."""
-    if not config.INSTAGRAM_SESSION_B64 or not config.INSTAGRAM_USERNAME:
-        return None
-
-    try:
-        session_bytes = base64.b64decode(config.INSTAGRAM_SESSION_B64)
-        session_dir = os.path.expanduser("~/.config/instaloader")
-        os.makedirs(session_dir, exist_ok=True)
-        session_path = os.path.join(session_dir, f"session-{config.INSTAGRAM_USERNAME}")
-        with open(session_path, "wb") as f:
-            f.write(session_bytes)
-        return session_path
-    except Exception:
-        return None
+from core import database, auth
 
 
 def _get_loader() -> instaloader.Instaloader:
@@ -46,14 +26,12 @@ def _get_loader() -> instaloader.Instaloader:
             "https": config.PROXY_URL,
         }
 
-    # Try to load session: first from env var (cloud), then from file (local)
+    # Load session from file (created by auth.login or auth.restore_session_from_env)
     if config.INSTAGRAM_USERNAME:
-        _restore_session_from_env()
         try:
             L.load_session_from_file(config.INSTAGRAM_USERNAME)
         except FileNotFoundError:
-            if config.INSTAGRAM_PASSWORD:
-                L.login(config.INSTAGRAM_USERNAME, config.INSTAGRAM_PASSWORD)
+            pass
 
     return L
 
@@ -75,6 +53,12 @@ def scrape_account(username: str, max_posts: int = None) -> dict:
     if max_posts is None:
         max_posts = config.DEFAULT_SCRAPE_LIMIT
 
+    if not auth.is_logged_in():
+        return {
+            "success": False, "posts_scraped": 0,
+            "error": "Faça login no Instagram primeiro (página principal)."
+        }
+
     L = _get_loader()
 
     try:
@@ -86,22 +70,15 @@ def scrape_account(username: str, max_posts: int = None) -> dict:
         if "429" in error_str or "too many" in error_str:
             msg = (
                 "Instagram bloqueou temporariamente (rate limit). "
-                "Isso é comum em servidores cloud. "
-                "Configure INSTAGRAM_SESSION_B64 nas variáveis de ambiente "
-                "(veja instruções na página Contas)."
+                "Aguarde alguns minutos e tente novamente."
             )
         elif "redirect" in error_str or "login" in error_str:
             msg = (
-                "Instagram redirecionou para login — o IP do servidor está bloqueado. "
-                "Configure INSTAGRAM_SESSION_B64 nas variáveis de ambiente "
-                "(veja instruções na página Contas)."
+                "Sessão expirada — o Instagram pediu login novamente. "
+                "Volte à página principal e faça login novamente."
             )
         else:
-            msg = (
-                f"Erro de conexão com Instagram: {e}. "
-                "Configure INSTAGRAM_SESSION_B64 nas variáveis de ambiente "
-                "(veja instruções na página Contas)."
-            )
+            msg = f"Erro de conexão com Instagram: {e}"
         return {"success": False, "posts_scraped": 0, "error": msg}
     except Exception as e:
         return {"success": False, "posts_scraped": 0, "error": f"Erro inesperado: {e}"}

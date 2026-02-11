@@ -5,11 +5,24 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 import streamlit as st
 
-from core import database, ai_generator
+from core import database, ai_generator, auth
+from core.page_guard import require_login
 
 database.init_db()
 
 st.set_page_config(page_title="Ideias | Content Radar", page_icon="📡", layout="wide")
+require_login()
+
+# Sidebar: session info
+with st.sidebar:
+    session_user = auth.get_session_username()
+    if session_user:
+        st.markdown(f"Logado como **@{session_user}**")
+        if st.button("Sair", use_container_width=True, key="logout_ideas"):
+            auth.logout()
+            st.session_state.logged_in = False
+            st.rerun()
+        st.divider()
 
 st.title("💡 Gerador de Ideias com IA")
 st.caption("Gere ideias criativas de conteúdo baseadas nas tendências dos perfis monitorados")

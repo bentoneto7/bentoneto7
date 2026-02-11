@@ -6,17 +6,27 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 import streamlit as st
 import plotly.express as px
 
-from core import database, analyzer
+from core import database, analyzer, auth
+from core.page_guard import require_login
 
 database.init_db()
 
 st.set_page_config(page_title="Tendências | Content Radar", page_icon="📡", layout="wide")
+require_login()
 
 st.title("📈 Tendências de Conteúdo")
 st.caption("Análise de tendências dos perfis monitorados")
 
 # Sidebar filters
 with st.sidebar:
+    session_user = auth.get_session_username()
+    if session_user:
+        st.markdown(f"Logado como **@{session_user}**")
+        if st.button("Sair", use_container_width=True, key="logout_trends"):
+            auth.logout()
+            st.session_state.logged_in = False
+            st.rerun()
+        st.divider()
     st.subheader("Filtros")
     days = st.slider("Período (dias)", 7, 90, 30)
 

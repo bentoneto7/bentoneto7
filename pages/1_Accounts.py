@@ -5,32 +5,29 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 import streamlit as st
 
-from core import database, scraper
+from core import database, scraper, auth
+from core.page_guard import require_login
 
 database.init_db()
 
 st.set_page_config(page_title="Contas | Content Radar", page_icon="📡", layout="wide")
+require_login()
+
+# Sidebar: session info
+with st.sidebar:
+    session_user = auth.get_session_username()
+    if session_user:
+        st.markdown(f"Logado como **@{session_user}**")
+        if st.button("Sair", use_container_width=True, key="logout_accounts"):
+            auth.logout()
+            st.session_state.logged_in = False
+            st.rerun()
+        st.divider()
 
 st.title("👥 Contas Monitoradas")
 st.caption("Gerencie os perfis do Instagram que você quer monitorar")
 
 st.divider()
-
-# Cloud environment warning
-import config
-if not config.INSTAGRAM_SESSION_B64 and not config.INSTAGRAM_USERNAME:
-    st.warning(
-        "**Sessão do Instagram não configurada.** O Instagram bloqueia IPs de servidores cloud. "
-        "Para funcionar, configure `INSTAGRAM_SESSION_B64` nas variáveis de ambiente do Railway.\n\n"
-        "**Como gerar a sessão (no seu PC local):**\n"
-        "1. `pip install instaloader`\n"
-        "2. `instaloader --login SEU_USER` (digite senha + código 2FA)\n"
-        "3. `base64 ~/.config/instaloader/session-SEU_USER` (Linux/Mac)\n"
-        "4. Cole o resultado como variável `INSTAGRAM_SESSION_B64` no Railway\n"
-        "5. Também adicione `INSTAGRAM_USERNAME` com seu user"
-    )
-elif config.INSTAGRAM_SESSION_B64:
-    st.success("Sessão do Instagram configurada via variável de ambiente.")
 
 # Add account form
 with st.form("add_account", clear_on_submit=True):
