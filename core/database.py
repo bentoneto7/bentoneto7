@@ -74,6 +74,23 @@ def init_db():
                 expires_at TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS meta_campaigns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                campaign_id TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                status TEXT DEFAULT 'PAUSED',
+                objective TEXT,
+                idea_id INTEGER,
+                daily_budget REAL DEFAULT 0,
+                spend REAL DEFAULT 0,
+                impressions INTEGER DEFAULT 0,
+                clicks INTEGER DEFAULT 0,
+                reach INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (idea_id) REFERENCES generated_ideas(id)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_posts_account ON posts(account_username);
             CREATE INDEX IF NOT EXISTS idx_posts_posted_at ON posts(posted_at);
             CREATE INDEX IF NOT EXISTS idx_posts_engagement ON posts(engagement_rate);
@@ -285,3 +302,57 @@ def cleanup_expired_sessions():
     """Remove expired sessions."""
     with get_connection() as conn:
         conn.execute("DELETE FROM user_sessions WHERE expires_at <= datetime('now')")
+
+
+# --- Meta Campaigns ---
+
+def save_meta_campaign(campaign_data: dict) -> int:
+    with get_connection() as conn:
+        cursor = conn.execute("""
+            INSERT INTO meta_campaigns
+                (campaign_id, name, status, objective, idea_id, daily_budget)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(campaign_id) DO UPDATE SET
+                name = excluded.name,
+                status = excluded.status,
+                daily_budget = excluded.daily_budget,
+                updated_at = CURRENT_TIMESTAMP
+        """, (
+            campaign_data["campaign_id"],
+            campaign_data.get("name", ""),
+            campaign_data.get("status", "PAUSED"),
+            campaign_data.get("objective", ""),
+            campaign_data.get("idea_id"),
+            campaign_data.get("daily_budget", 0),
+        ))
+        return cursor.lastrowid
+
+
+def get_meta_campaigns() -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM meta_campaigns ORDER BY created_at DESC"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def update_meta_campaign_metrics(campaign_id: str, metrics: dict):
+    with get_connection() as conn:
+        conn.execute("""
+            UPDATE meta_campaigns
+            SET spend = ?, impressions = ?, clicks = ?, reach = ?,
+                status = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE campaign_id = ?
+        """, (
+            metrics.get("spend", 0),
+            metrics.get("impressions", 0),
+            metrics.get("clicks", 0),
+            metrics.get("reach", 0),
+            metrics.get("status", "PAUSED"),
+            campaign_id,
+        ))
+
+
+def delete_meta_campaign(campaign_id: str):
+    with get_connection() as conn:
+        conn.execute("DELETE FROM meta_campaigns WHERE campaign_id = ?", (campaign_id,))

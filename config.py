@@ -26,3 +26,9 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "content_rada
 # Scraping settings
 DEFAULT_SCRAPE_LIMIT = 30
 SCRAPE_DELAY_SECONDS = 3
+
+# Meta Ads (Facebook Marketing API)
+META_APP_ID = os.getenv("META_APP_ID", "")
+META_APP_SECRET = os.getenv("META_APP_SECRET", "")
+META_ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN", "")
+META_AD_ACCOUNT_ID = os.getenv("META_AD_ACCOUNT_ID", "")
