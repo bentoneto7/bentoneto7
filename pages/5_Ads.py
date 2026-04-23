@@ -9,12 +9,97 @@ import config
 from core import database, auth, meta_ads
 from core.page_guard import require_login
 
+
+# ── Conditional formatting helpers ───────────────────────────────────────────
+
+def badge(text: str, color: str) -> str:
+    """Return an HTML colored badge."""
+    colors = {
+        "green":  ("#d4edda", "#155724"),
+        "yellow": ("#fff3cd", "#856404"),
+        "red":    ("#f8d7da", "#721c24"),
+        "blue":   ("#d1ecf1", "#0c5460"),
+        "gray":   ("#e2e3e5", "#383d41"),
+    }
+    bg, fg = colors.get(color, colors["gray"])
+    return (
+        f'<span style="background:{bg};color:{fg};padding:2px 10px;'
+        f'border-radius:12px;font-size:0.8rem;font-weight:600;">{text}</span>'
+    )
+
+
+def status_badge(status: str) -> str:
+    if status == "ACTIVE":
+        return badge("● ATIVA", "green")
+    if status == "PAUSED":
+        return badge("⏸ PAUSADA", "yellow")
+    if status == "ARCHIVED":
+        return badge("✕ ARQUIVADA", "gray")
+    return badge(status, "gray")
+
+
+def ctr_badge(ctr: float) -> str:
+    """CTR benchmark: >2% good, 1-2% ok, <1% bad."""
+    if ctr >= 2.0:
+        return badge(f"CTR {ctr:.2f}% ▲", "green")
+    if ctr >= 1.0:
+        return badge(f"CTR {ctr:.2f}% →", "yellow")
+    return badge(f"CTR {ctr:.2f}% ▼", "red")
+
+
+def cpc_badge(cpc: float, product_price: float = 0.0, currency: str = "R$") -> str:
+    """
+    Custo por venda vs. valor do produto:
+      ≤ 30% do preço → verde (bom)
+      31–50%         → amarelo (médio)
+      > 50%          → vermelho (ruim)
+    Se product_price não for informado, usa limites fixos R$1 / R$3.
+    """
+    if cpc == 0:
+        return badge("Custo —", "gray")
+    if product_price > 0:
+        pct = (cpc / product_price) * 100
+        label = f"Custo {currency}{cpc:.2f} ({pct:.0f}% do prod.)"
+        if pct <= 30:
+            return badge(f"{label} ▲", "green")
+        if pct <= 50:
+            return badge(f"{label} →", "yellow")
+        return badge(f"{label} ▼", "red")
+    # fallback sem preço configurado
+    if cpc < 1.0:
+        return badge(f"CPC {currency}{cpc:.2f} ▲", "green")
+    if cpc <= 3.0:
+        return badge(f"CPC {currency}{cpc:.2f} →", "yellow")
+    return badge(f"CPC {currency}{cpc:.2f} ▼", "red")
+
+
+def spend_badge(spend: float, daily_budget: float, currency: str = "R$") -> str:
+    """Spend vs budget: >70% good delivery, 30-70% ok, <30% underdelivering."""
+    if daily_budget <= 0:
+        return badge(f"Gasto {currency}{spend:.2f}", "gray")
+    pct = (spend / daily_budget) * 100
+    if pct >= 70:
+        return badge(f"Gasto {currency}{spend:.2f} ({pct:.0f}%)", "green")
+    if pct >= 30:
+        return badge(f"Gasto {currency}{spend:.2f} ({pct:.0f}%)", "yellow")
+    return badge(f"Gasto {currency}{spend:.2f} ({pct:.0f}%) ⚠", "red")
+
+
+def impressions_badge(impressions: int) -> str:
+    if impressions >= 10000:
+        return badge(f"{impressions:,} impressões ▲", "green")
+    if impressions >= 1000:
+        return badge(f"{impressions:,} impressões →", "yellow")
+    if impressions == 0:
+        return badge("Sem impressões", "gray")
+    return badge(f"{impressions:,} impressões ▼", "red")
+
 database.init_db()
 
 st.set_page_config(page_title="Meta Ads | Content Radar", page_icon="📡", layout="wide")
 require_login()
 
-# Sidebar: session info
+# Sidebar: session info + product price config
 with st.sidebar:
     session_user = auth.get_session_username()
     if session_user:
@@ -24,6 +109,23 @@ with st.sidebar:
             st.session_state.logged_in = False
             st.rerun()
         st.divider()
+
+    st.markdown("### ⚙️ Parâmetro de Performance")
+    product_price = st.number_input(
+        "Valor do produto / serviço (R$):",
+        min_value=0.0,
+        value=float(st.session_state.get("product_price", 0.0)),
+        step=10.0,
+        help="Usado para calcular custo por venda: ≤30% = bom, 31-50% = médio, >50% = ruim",
+    )
+    st.session_state["product_price"] = product_price
+    if product_price > 0:
+        st.caption(
+            f"🟢 Bom: até R${product_price * 0.30:.2f}\n\n"
+            f"🟡 Médio: R${product_price * 0.30:.2f} – R${product_price * 0.50:.2f}\n\n"
+            f"🔴 Ruim: acima de R${product_price * 0.50:.2f}"
+        )
+    st.divider()
 
 st.title("📢 Meta Ads")
 st.caption("Gerencie e crie campanhas pagas a partir das suas ideias de conteúdo")
@@ -112,14 +214,16 @@ with tab_campaigns:
 
         for camp in campaigns:
             status = camp["status"]
-            status_badge = "🟢" if status == "ACTIVE" else "🔴" if status == "PAUSED" else "⚪"
             objective_label = objective_labels.get(camp["objective"], camp["objective"])
 
             with st.container(border=True):
                 c1, c2, c3, c4, c5 = st.columns([3, 1, 1, 1, 1])
 
                 with c1:
-                    st.markdown(f"**{status_badge} {camp['name']}**")
+                    st.markdown(
+                        f"{status_badge(status)} &nbsp; **{camp['name']}**",
+                        unsafe_allow_html=True,
+                    )
                     st.caption(f"ID: `{camp['campaign_id']}` · Criada em: {camp['created_time'][:10]}")
 
                 with c2:
@@ -130,9 +234,9 @@ with tab_campaigns:
                     st.metric("Budget/dia", f"R$ {budget:.2f}" if budget else "—")
 
                 with c4:
-                    # Insights button
                     if st.button("📈 Métricas", key=f"insights_{camp['campaign_id']}"):
-                        st.session_state[f"show_insights_{camp['campaign_id']}"] = True
+                        toggled = not st.session_state.get(f"show_insights_{camp['campaign_id']}", False)
+                        st.session_state[f"show_insights_{camp['campaign_id']}"] = toggled
 
                 with c5:
                     if status == "ACTIVE":
@@ -156,13 +260,17 @@ with tab_campaigns:
                             else:
                                 st.error("Falha ao ativar campanha.")
 
-                # Show insights if requested
+                # ── Campaign insights ─────────────────────────────────────
                 if st.session_state.get(f"show_insights_{camp['campaign_id']}"):
                     with st.expander("📊 Métricas da Campanha", expanded=True):
                         period = st.selectbox(
                             "Período",
                             ["today", "last_7_d", "last_30_d"],
-                            format_func=lambda x: {"today": "Hoje", "last_7_d": "Últimos 7 dias", "last_30_d": "Últimos 30 dias"}[x],
+                            format_func=lambda x: {
+                                "today": "Hoje",
+                                "last_7_d": "Últimos 7 dias",
+                                "last_30_d": "Últimos 30 dias",
+                            }[x],
                             key=f"period_{camp['campaign_id']}",
                         )
                         try:
@@ -176,7 +284,16 @@ with tab_campaigns:
                             m5.metric("CTR", f"{ins['ctr']:.2f}%")
                             m6.metric("CPC (R$)", f"{ins['cpc']:.2f}")
 
-                            # Save to local DB
+                            st.markdown(
+                                "&nbsp;&nbsp;".join([
+                                    ctr_badge(ins["ctr"]),
+                                    cpc_badge(ins["cpc"], product_price),
+                                    spend_badge(ins["spend"], camp["daily_budget"]),
+                                    impressions_badge(ins["impressions"]),
+                                ]),
+                                unsafe_allow_html=True,
+                            )
+
                             database.update_meta_campaign_metrics(
                                 camp["campaign_id"],
                                 {**ins, "status": camp["status"]},
@@ -184,9 +301,79 @@ with tab_campaigns:
                         except Exception as e:
                             st.warning(f"Sem dados de insights: {e}")
 
-                        if st.button("Fechar", key=f"close_insights_{camp['campaign_id']}"):
-                            st.session_state[f"show_insights_{camp['campaign_id']}"] = False
-                            st.rerun()
+                # ── Ad Sets ───────────────────────────────────────────────
+                with st.expander(f"📦 Conjuntos de Anúncios", expanded=False):
+                    try:
+                        with st.spinner("Carregando conjuntos..."):
+                            ad_sets = meta_ads.get_ad_sets(camp["campaign_id"])
+
+                        if not ad_sets:
+                            st.info("Nenhum conjunto encontrado nesta campanha.")
+                        else:
+                            adset_period = st.selectbox(
+                                "Período (conjuntos)",
+                                ["today", "last_7_d", "last_30_d"],
+                                format_func=lambda x: {
+                                    "today": "Hoje",
+                                    "last_7_d": "Últimos 7 dias",
+                                    "last_30_d": "Últimos 30 dias",
+                                }[x],
+                                key=f"adset_period_{camp['campaign_id']}",
+                            )
+
+                            for adset in ad_sets:
+                                as_status = adset["status"]
+                                as_budget = adset["daily_budget"]
+
+                                a1, a2, a3, a4 = st.columns([3, 1, 1, 1])
+                                with a1:
+                                    st.markdown(
+                                        f"{status_badge(as_status)} &nbsp; **{adset['name']}**",
+                                        unsafe_allow_html=True,
+                                    )
+                                    st.caption(
+                                        f"ID: `{adset['adset_id']}` · "
+                                        f"Meta: {adset['optimization_goal']}"
+                                    )
+                                with a2:
+                                    st.metric("Budget/dia", f"R$ {as_budget:.2f}" if as_budget else "—")
+                                with a3:
+                                    if as_status == "ACTIVE":
+                                        if st.button("⏸ Pausar", key=f"pause_as_{adset['adset_id']}"):
+                                            meta_ads.update_adset_status(adset["adset_id"], "PAUSED")
+                                            st.rerun()
+                                    else:
+                                        if st.button("▶ Ativar", key=f"act_as_{adset['adset_id']}"):
+                                            meta_ads.update_adset_status(adset["adset_id"], "ACTIVE")
+                                            st.rerun()
+                                with a4:
+                                    load_ins = st.button("📈", key=f"ins_as_{adset['adset_id']}")
+
+                                if load_ins:
+                                    try:
+                                        as_ins = meta_ads.get_adset_insights(adset["adset_id"], adset_period)
+                                        ai1, ai2, ai3, ai4, ai5, ai6 = st.columns(6)
+                                        ai1.metric("Impressões", f"{as_ins['impressions']:,}")
+                                        ai2.metric("Cliques", f"{as_ins['clicks']:,}")
+                                        ai3.metric("Alcance", f"{as_ins['reach']:,}")
+                                        ai4.metric("Gasto", f"R$ {as_ins['spend']:.2f}")
+                                        ai5.metric("CTR", f"{as_ins['ctr']:.2f}%")
+                                        ai6.metric("CPC", f"R$ {as_ins['cpc']:.2f}")
+                                        st.markdown(
+                                            "&nbsp;&nbsp;".join([
+                                                ctr_badge(as_ins["ctr"]),
+                                                cpc_badge(as_ins["cpc"], product_price),
+                                                spend_badge(as_ins["spend"], as_budget),
+                                                impressions_badge(as_ins["impressions"]),
+                                            ]),
+                                            unsafe_allow_html=True,
+                                        )
+                                    except Exception as e:
+                                        st.warning(f"Sem insights: {e}")
+
+                                st.divider()
+                    except Exception as e:
+                        st.warning(f"Erro ao carregar conjuntos: {e}")
 
 # ── Tab 2: Create campaign ────────────────────────────────────────────────────
 with tab_create:
@@ -344,17 +531,37 @@ with tab_history:
                 h_col, d_col, btn_col = st.columns([3, 3, 1])
 
                 with h_col:
-                    st.markdown(f"**{status_badge} {camp['name']}**")
+                    st.markdown(
+                        f"{status_badge(status)} &nbsp; **{camp['name']}**",
+                        unsafe_allow_html=True,
+                    )
                     st.caption(f"ID: `{camp['campaign_id']}`")
                     obj_label = objective_labels.get(camp.get("objective", ""), camp.get("objective", ""))
                     st.caption(f"Objetivo: {obj_label} · Atualizado: {updated}")
 
                 with d_col:
+                    impressions_val = camp.get("impressions", 0)
+                    clicks_val = camp.get("clicks", 0)
+                    spend_val = float(camp.get("spend", 0))
+                    budget_val = float(camp.get("daily_budget", 0))
+                    ctr_val = (clicks_val / impressions_val * 100) if impressions_val > 0 else 0.0
+                    cpc_val = (spend_val / clicks_val) if clicks_val > 0 else 0.0
+
                     m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("Impressões", f"{camp.get('impressions', 0):,}")
-                    m2.metric("Cliques", f"{camp.get('clicks', 0):,}")
+                    m1.metric("Impressões", f"{impressions_val:,}")
+                    m2.metric("Cliques", f"{clicks_val:,}")
                     m3.metric("Alcance", f"{camp.get('reach', 0):,}")
-                    m4.metric("Gasto", f"R$ {float(camp.get('spend', 0)):.2f}")
+                    m4.metric("Gasto", f"R$ {spend_val:.2f}")
+
+                    st.markdown(
+                        "&nbsp;&nbsp;".join([
+                            ctr_badge(ctr_val),
+                            cpc_badge(cpc_val, product_price),
+                            spend_badge(spend_val, budget_val),
+                            impressions_badge(impressions_val),
+                        ]),
+                        unsafe_allow_html=True,
+                    )
 
                 with btn_col:
                     meta_url = f"https://adsmanager.facebook.com/adsmanager/manage/campaigns?act={config.META_AD_ACCOUNT_ID.replace('act_', '')}"

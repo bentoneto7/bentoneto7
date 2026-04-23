@@ -154,6 +154,75 @@ def create_ad_set(campaign_id: str, name: str, targeting: dict,
     }
 
 
+def get_ad_sets(campaign_id: str) -> list[dict]:
+    """List all ad sets inside a campaign."""
+    from facebook_business.adobjects.campaign import Campaign
+    from facebook_business.adobjects.adset import AdSet
+
+    _get_api()
+    campaign = Campaign(campaign_id)
+    fields = [
+        AdSet.Field.id,
+        AdSet.Field.name,
+        AdSet.Field.status,
+        AdSet.Field.daily_budget,
+        AdSet.Field.optimization_goal,
+        AdSet.Field.targeting,
+        AdSet.Field.created_time,
+    ]
+    ad_sets = campaign.get_ad_sets(fields=fields)
+
+    result = []
+    for adset in ad_sets:
+        result.append({
+            "adset_id": adset.get(AdSet.Field.id, ""),
+            "name": adset.get(AdSet.Field.name, ""),
+            "status": adset.get(AdSet.Field.status, ""),
+            "daily_budget": float(adset.get(AdSet.Field.daily_budget) or 0) / 100,
+            "optimization_goal": adset.get(AdSet.Field.optimization_goal, ""),
+            "created_time": str(adset.get(AdSet.Field.created_time, "")),
+        })
+    return result
+
+
+def get_adset_insights(adset_id: str, date_preset: str = "last_7_d") -> dict:
+    """Fetch metrics for a specific ad set."""
+    from facebook_business.adobjects.adset import AdSet
+
+    _get_api()
+    adset = AdSet(adset_id)
+    fields = ["impressions", "clicks", "reach", "spend", "ctr", "cpc"]
+    params = {"date_preset": date_preset}
+
+    insights = adset.get_insights(fields=fields, params=params)
+
+    if not insights:
+        return {"impressions": 0, "clicks": 0, "reach": 0, "spend": 0.0, "ctr": 0.0, "cpc": 0.0}
+
+    data = insights[0]
+    return {
+        "impressions": int(data.get("impressions", 0)),
+        "clicks": int(data.get("clicks", 0)),
+        "reach": int(data.get("reach", 0)),
+        "spend": float(data.get("spend", 0)),
+        "ctr": float(data.get("ctr", 0)),
+        "cpc": float(data.get("cpc", 0)),
+    }
+
+
+def update_adset_status(adset_id: str, status: str) -> bool:
+    """Set ad set status to ACTIVE or PAUSED."""
+    from facebook_business.adobjects.adset import AdSet
+
+    _get_api()
+    adset = AdSet(adset_id)
+    try:
+        adset.api_update(params={AdSet.Field.status: status})
+        return True
+    except Exception:
+        return False
+
+
 def get_campaign_insights(campaign_id: str, date_preset: str = "last_7_d") -> dict:
     """
     Fetch metrics for a campaign.
