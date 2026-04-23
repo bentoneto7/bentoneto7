@@ -111,19 +111,31 @@ with st.sidebar:
         st.divider()
 
     st.markdown("### ⚙️ Parâmetro de Performance")
+
+    # Load saved price from DB on first render
+    if "product_price" not in st.session_state:
+        saved = database.get_config("product_price", "0")
+        st.session_state["product_price"] = float(saved)
+
     product_price = st.number_input(
         "Valor do produto / serviço (R$):",
         min_value=0.0,
-        value=float(st.session_state.get("product_price", 0.0)),
+        value=st.session_state["product_price"],
         step=10.0,
-        help="Usado para calcular custo por venda: ≤30% = bom, 31-50% = médio, >50% = ruim",
+        help="≤30% do valor = bom · 31–50% = médio · >50% = ruim",
+        key="product_price_input",
     )
-    st.session_state["product_price"] = product_price
+
+    # Persist whenever the value changes
+    if product_price != st.session_state["product_price"]:
+        st.session_state["product_price"] = product_price
+        database.set_config("product_price", str(product_price))
+
     if product_price > 0:
         st.caption(
-            f"🟢 Bom: até R${product_price * 0.30:.2f}\n\n"
-            f"🟡 Médio: R${product_price * 0.30:.2f} – R${product_price * 0.50:.2f}\n\n"
-            f"🔴 Ruim: acima de R${product_price * 0.50:.2f}"
+            f"🟢 Bom: até R$ {product_price * 0.30:.2f}\n\n"
+            f"🟡 Médio: até R$ {product_price * 0.50:.2f}\n\n"
+            f"🔴 Ruim: acima de R$ {product_price * 0.50:.2f}"
         )
     st.divider()
 

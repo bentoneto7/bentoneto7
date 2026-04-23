@@ -74,6 +74,12 @@ def init_db():
                 expires_at TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS app_config (
+                key TEXT PRIMARY KEY NOT NULL,
+                value TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS meta_campaigns (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 campaign_id TEXT UNIQUE NOT NULL,
@@ -356,3 +362,24 @@ def update_meta_campaign_metrics(campaign_id: str, metrics: dict):
 def delete_meta_campaign(campaign_id: str):
     with get_connection() as conn:
         conn.execute("DELETE FROM meta_campaigns WHERE campaign_id = ?", (campaign_id,))
+
+
+# --- App Config (persistent key-value settings) ---
+
+def set_config(key: str, value: str):
+    with get_connection() as conn:
+        conn.execute("""
+            INSERT INTO app_config (key, value, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = CURRENT_TIMESTAMP
+        """, (key, value))
+
+
+def get_config(key: str, default: str = "") -> str:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT value FROM app_config WHERE key = ?", (key,)
+        ).fetchone()
+        return row[0] if row else default
