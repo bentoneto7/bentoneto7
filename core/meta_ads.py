@@ -223,6 +223,159 @@ def update_adset_status(adset_id: str, status: str) -> bool:
         return False
 
 
+def get_account_daily_insights(date_preset: str = "last_7_d") -> list[dict]:
+    """
+    Return account-level daily breakdown for sparkline charts.
+    Each item: {date, impressions, clicks, reach, spend, ctr, cpc, cpm, frequency, conversions}
+    """
+    from facebook_business.adobjects.adaccount import AdAccount
+
+    _get_api()
+    account = AdAccount(config.META_AD_ACCOUNT_ID)
+    fields = ["impressions", "clicks", "reach", "spend", "ctr", "cpc", "cpm",
+              "frequency", "actions", "action_values"]
+    params = {"date_preset": date_preset, "time_increment": 1}
+
+    insights = account.get_insights(fields=fields, params=params)
+
+    result = []
+    for row in insights:
+        conversions = 0
+        conversion_value = 0.0
+        for action in row.get("actions") or []:
+            if action.get("action_type") in ("purchase", "offsite_conversion.fb_pixel_purchase"):
+                conversions += int(action.get("value", 0))
+        for av in row.get("action_values") or []:
+            if av.get("action_type") in ("purchase", "offsite_conversion.fb_pixel_purchase"):
+                conversion_value += float(av.get("value", 0))
+
+        result.append({
+            "date": row.get("date_start", ""),
+            "impressions": int(row.get("impressions", 0)),
+            "clicks": int(row.get("clicks", 0)),
+            "reach": int(row.get("reach", 0)),
+            "spend": float(row.get("spend", 0)),
+            "ctr": float(row.get("ctr", 0)),
+            "cpc": float(row.get("cpc", 0)),
+            "cpm": float(row.get("cpm", 0)),
+            "frequency": float(row.get("frequency", 0)),
+            "conversions": conversions,
+            "conversion_value": conversion_value,
+        })
+    return sorted(result, key=lambda x: x["date"])
+
+
+def get_campaigns_performance(date_preset: str = "last_7_d") -> list[dict]:
+    """
+    Return all campaigns with full metrics for ranking/comparison.
+    Sorted by spend descending.
+    """
+    from facebook_business.adobjects.adaccount import AdAccount
+    from facebook_business.adobjects.campaign import Campaign
+
+    _get_api()
+    account = AdAccount(config.META_AD_ACCOUNT_ID)
+    fields = [
+        Campaign.Field.id,
+        Campaign.Field.name,
+        Campaign.Field.status,
+        Campaign.Field.objective,
+    ]
+    campaigns = account.get_campaigns(fields=fields)
+
+    result = []
+    for c in campaigns:
+        cid = c.get(Campaign.Field.id, "")
+        try:
+            ins = get_campaign_insights(cid, date_preset)
+        except Exception:
+            ins = {"impressions": 0, "clicks": 0, "reach": 0,
+                   "spend": 0, "ctr": 0, "cpc": 0}
+
+        conversions = 0
+        conversion_value = 0.0
+        try:
+            raw = Campaign(cid).get_insights(
+                fields=["actions", "action_values"],
+                params={"date_preset": date_preset},
+            )
+            if raw:
+                for action in raw[0].get("actions") or []:
+                    if action.get("action_type") in (
+                        "purchase", "offsite_conversion.fb_pixel_purchase"
+                    ):
+                        conversions += int(action.get("value", 0))
+                for av in raw[0].get("action_values") or []:
+                    if av.get("action_type") in (
+                        "purchase", "offsite_conversion.fb_pixel_purchase"
+                    ):
+                        conversion_value += float(av.get("value", 0))
+        except Exception:
+            pass
+
+        spend = ins["spend"]
+        cpa = spend / conversions if conversions > 0 else 0
+        roas = conversion_value / spend if spend > 0 else 0
+
+        result.append({
+            "campaign_id": cid,
+            "name": c.get(Campaign.Field.name, ""),
+            "status": c.get(Campaign.Field.status, ""),
+            "objective": c.get(Campaign.Field.objective, ""),
+            **ins,
+            "conversions": conversions,
+            "conversion_value": conversion_value,
+            "cpa": cpa,
+            "roas": roas,
+        })
+
+    return sorted(result, key=lambda x: x["spend"], reverse=True)
+
+
+def get_top_ads(limit: int = 5, date_preset: str = "last_7_d") -> list[dict]:
+    """Return top performing ads sorted by CTR."""
+    from facebook_business.adobjects.adaccount import AdAccount
+    from facebook_business.adobjects.ad import Ad
+
+    _get_api()
+    account = AdAccount(config.META_AD_ACCOUNT_ID)
+    fields = [Ad.Field.id, Ad.Field.name, Ad.Field.status, Ad.Field.creative]
+    ads = account.get_ads(fields=fields)
+
+    result = []
+    for ad in ads:
+        aid = ad.get(Ad.Field.id, "")
+        try:
+            raw = ad.get_insights(
+                fields=["impressions", "clicks", "spend", "ctr", "cpc", "actions"],
+                params={"date_preset": date_preset},
+            )
+            if not raw:
+                continue
+            row = raw[0]
+            conversions = sum(
+                int(a.get("value", 0)) for a in (row.get("actions") or [])
+                if a.get("action_type") in (
+                    "purchase", "offsite_conversion.fb_pixel_purchase"
+                )
+            )
+            result.append({
+                "ad_id": aid,
+                "name": ad.get(Ad.Field.name, ""),
+                "status": ad.get(Ad.Field.status, ""),
+                "impressions": int(row.get("impressions", 0)),
+                "clicks": int(row.get("clicks", 0)),
+                "spend": float(row.get("spend", 0)),
+                "ctr": float(row.get("ctr", 0)),
+                "cpc": float(row.get("cpc", 0)),
+                "conversions": conversions,
+            })
+        except Exception:
+            continue
+
+    return sorted(result, key=lambda x: x["ctr"], reverse=True)[:limit]
+
+
 def get_campaign_insights(campaign_id: str, date_preset: str = "last_7_d") -> dict:
     """
     Fetch metrics for a campaign.

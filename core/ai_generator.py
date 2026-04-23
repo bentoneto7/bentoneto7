@@ -108,6 +108,76 @@ def _parse_json_response(response_text: str) -> list:
         return []
 
 
+def analyze_ads_performance(
+    totals: dict,
+    campaigns: list[dict],
+    top_ads: list[dict],
+    product_price: float = 0.0,
+) -> str:
+    """
+    Use Claude to diagnose ad account performance and return a plain-text analysis
+    covering profitability, best/worst campaigns, best creatives, and recommendations.
+    """
+    if not config.ANTHROPIC_API_KEY:
+        return "Configure a ANTHROPIC_API_KEY para ativar a análise com IA."
+
+    # Build summary strings
+    camp_lines = "\n".join(
+        f"- {c['name']}: gasto R${c['spend']:.2f}, impressões {c['impressions']:,}, "
+        f"cliques {c['clicks']:,}, CTR {c['ctr']:.2f}%, CPA R${c['cpa']:.2f}, ROAS {c['roas']:.2f}x"
+        for c in campaigns[:10]
+    ) or "Nenhuma campanha com dados."
+
+    ad_lines = "\n".join(
+        f"- {a['name']}: CTR {a['ctr']:.2f}%, cliques {a['clicks']:,}, gasto R${a['spend']:.2f}"
+        for a in top_ads[:5]
+    ) or "Nenhum criativo com dados."
+
+    price_line = f"Valor do produto: R${product_price:.2f}" if product_price > 0 else ""
+    target_cpa = f"Meta de CPA: até R${product_price * 0.30:.2f} (30% do produto)" if product_price > 0 else ""
+
+    prompt = f"""Você é um especialista em tráfego pago no Brasil. Analise os dados de desempenho abaixo e forneça um diagnóstico completo.
+
+**DADOS GERAIS DO PERÍODO:**
+- Investimento total: R${totals.get('spend', 0):.2f}
+- Alcance: {totals.get('reach', 0):,}
+- Impressões: {totals.get('impressions', 0):,}
+- Cliques: {totals.get('clicks', 0):,}
+- CTR médio: {totals.get('ctr', 0):.2f}%
+- CPC médio: R${totals.get('cpc', 0):.2f}
+- CPM médio: R${totals.get('cpm', 0):.2f}
+- Frequência média: {totals.get('frequency', 0):.2f}
+- Conversões: {totals.get('conversions', 0)}
+- Valor em conversões: R${totals.get('conversion_value', 0):.2f}
+- ROAS geral: {totals.get('roas', 0):.2f}x
+- CPA geral: R${totals.get('cpa', 0):.2f}
+{price_line}
+{target_cpa}
+
+**CAMPANHAS:**
+{camp_lines}
+
+**TOP CRIATIVOS (por CTR):**
+{ad_lines}
+
+Forneça a análise em português, em 4 blocos claros:
+
+1. **Diagnóstico de Lucratividade** — estamos tendo lucro ou prejuízo? Por quê?
+2. **Campanhas que performaram melhor e pior** — quais levar adiante, quais pausar?
+3. **Criativos em destaque** — o que está chamando mais atenção e por quê?
+4. **Recomendações práticas** — 3 ações concretas para melhorar os resultados agora.
+
+Seja direto, objetivo e use números da análise para embasar cada ponto."""
+
+    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+    message = client.messages.create(
+        model=config.CLAUDE_MODEL,
+        max_tokens=1500,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return message.content[0].text
+
+
 def analyze_niche_and_suggest_creators(
     username: str,
     bio: str = "",
